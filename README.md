@@ -8,6 +8,20 @@
 
 ---
 
+## 实机预览
+
+**Win11 任务栏无侵入「鼠标液位填充」直显（自适应浅/深色任务栏与悬停反馈）**
+
+![Win11 任务栏鼠标液位填充直显](docs/screenshots/taskbar.png)
+
+| 总览（极简双栏 + 3.8px 纯数据圆环） | 历史趋势（30 天走势与 50 项明细） |
+| :---: | :---: |
+| ![总览页](docs/screenshots/overview.png) | ![历史趋势页](docs/screenshots/history.png) |
+| **偏好设置（设备档案与脱敏诊断导出）** | **托盘后台驻留内存占用实测** |
+| ![偏好设置页](docs/screenshots/settings.png) | ![后台驻留内存占用](docs/screenshots/memory.png) |
+
+---
+
 ## 核心特性
 
 1. **极简双栏总览（Iris Greenhouse 浅色主题）**
