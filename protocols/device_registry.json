@@ -32,6 +32,15 @@
         "interface_number": null,
         "output_report_length": 64
       }
+    },
+    "evision_nearlink": {
+      "protocol_status": "ready",
+      "hid_match": {
+        "usage_page": "0xFFB3",
+        "usage": "0x0001",
+        "interface_number": null,
+        "output_report_length": 64
+      }
     }
   },
   "excluded_vid_pids": [
@@ -3173,7 +3182,7 @@
         "output_report_length": 64
       },
       "candidate_model_ids": [
-        "atk_zero"
+        "bitmouse_dongle_373b_1155"
       ],
       "shared_pid_collision": false
     },
@@ -3221,7 +3230,7 @@
         "output_report_length": 64
       },
       "candidate_model_ids": [
-        "atk_zero"
+        "bitmouse_dongle_373b_124f"
       ],
       "shared_pid_collision": false
     },
@@ -4694,6 +4703,38 @@
       },
       "candidate_model_ids": [
         "bitmouse_wired_373b_1374"
+      ],
+      "shared_pid_collision": false
+    },
+    "373B:108C": {
+      "vid": "0x373B",
+      "pid": "0x108C",
+      "link_role": "wireless_dongle",
+      "protocol_family": "evision_nearlink",
+      "hid_match_override": {
+        "usage_page": "0xFFB3",
+        "usage": "0x0001",
+        "interface_number": null,
+        "output_report_length": 64
+      },
+      "candidate_model_ids": [
+        "atk_x1_nearlink_dongle"
+      ],
+      "shared_pid_collision": false
+    },
+    "373B:108B": {
+      "vid": "0x373B",
+      "pid": "0x108B",
+      "link_role": "wired_usb",
+      "protocol_family": "evision_nearlink",
+      "hid_match_override": {
+        "usage_page": "0xFFB2",
+        "usage": "0x0001",
+        "interface_number": null,
+        "output_report_length": 64
+      },
+      "candidate_model_ids": [
+        "atk_x1_nearlink_wired"
       ],
       "shared_pid_collision": false
     }
@@ -7527,6 +7568,46 @@
       "protocol_family": "nordic54",
       "voltage_capability": "none",
       "firmware_percent_step": null
+    },
+    "atk_x1_nearlink_dongle": {
+      "brand": "ATK",
+      "display_name": "ATK X1 Nearlink (8K)",
+      "verification_tier": "protocol_known_uncalibrated",
+      "calibration_status": "no_voltage",
+      "lut_profile_id": null,
+      "protocol_family": "evision_nearlink",
+      "voltage_capability": "none",
+      "firmware_percent_step": null
+    },
+    "atk_x1_nearlink_wired": {
+      "brand": "ATK",
+      "display_name": "ATK X1 Nearlink (Wired)",
+      "verification_tier": "protocol_known_uncalibrated",
+      "calibration_status": "no_voltage",
+      "lut_profile_id": null,
+      "protocol_family": "evision_nearlink",
+      "voltage_capability": "none",
+      "firmware_percent_step": null
+    },
+    "bitmouse_dongle_373b_1155": {
+      "brand": "ATK",
+      "display_name": "Wireless mouse 8k dongle-L1",
+      "verification_tier": "catalog_only",
+      "calibration_status": "no_voltage",
+      "lut_profile_id": null,
+      "protocol_family": "nordic54",
+      "voltage_capability": "none",
+      "firmware_percent_step": null
+    },
+    "bitmouse_dongle_373b_124f": {
+      "brand": "ATK",
+      "display_name": "Wireless mouse 8k dongle-L0",
+      "verification_tier": "catalog_only",
+      "calibration_status": "no_voltage",
+      "lut_profile_id": null,
+      "protocol_family": "nordic54",
+      "voltage_capability": "none",
+      "firmware_percent_step": null
     }
   },
   "compx_cid_mid_catalog": {
@@ -8329,6 +8410,323 @@
       "model_id": "compx_cid_2_137",
       "brand": "VXE",
       "display_name": "VXE R1SE+ Silent (CORE26K)"
+    }
+  },
+  "bitmouse_cid_mid_catalog": {
+    "1,1": {
+      "model_id": "atk_zero",
+      "brand": "ATK",
+      "display_name": "ATK ZERO"
+    },
+    "2,1": {
+      "model_id": "bitmouse_cid_2_1",
+      "brand": "ATK",
+      "display_name": "ATK A9 Pro Max 2.0 NK"
+    },
+    "1,2": {
+      "model_id": "bitmouse_cid_1_2",
+      "brand": "ATK",
+      "display_name": "ATK A9 Ultimate 3.0"
+    },
+    "2,5": {
+      "model_id": "bitmouse_cid_2_5",
+      "brand": "VXE",
+      "display_name": "VXE V3 NK"
+    },
+    "2,6": {
+      "model_id": "bitmouse_cid_2_6",
+      "brand": "VXE",
+      "display_name": "VXE V3 PRO NK"
+    },
+    "2,7": {
+      "model_id": "bitmouse_cid_2_7",
+      "brand": "VXE",
+      "display_name": "VXE V3 Plus"
+    },
+    "2,2": {
+      "model_id": "bitmouse_cid_2_2",
+      "brand": "ATK",
+      "display_name": "ATK A9 SE NK"
+    },
+    "2,3": {
+      "model_id": "bitmouse_cid_2_3",
+      "brand": "ATK",
+      "display_name": "ATK A9 2.0 NK"
+    },
+    "2,4": {
+      "model_id": "bitmouse_cid_2_4",
+      "brand": "ATK",
+      "display_name": "ATK A9 Plus NK"
+    },
+    "1,3": {
+      "model_id": "bitmouse_cid_1_3",
+      "brand": "ATK",
+      "display_name": "ATK Ghost Ultimate"
+    },
+    "2,8": {
+      "model_id": "bitmouse_cid_2_8",
+      "brand": "VXE",
+      "display_name": "VXE R1 NK"
+    },
+    "2,9": {
+      "model_id": "bitmouse_cid_2_9",
+      "brand": "VXE",
+      "display_name": "VXE R1 S NK"
+    },
+    "1,4": {
+      "model_id": "bitmouse_cid_1_4",
+      "brand": "ATK",
+      "display_name": "ATK A9 Mini +"
+    },
+    "2,13": {
+      "model_id": "bitmouse_cid_2_13",
+      "brand": "ATK",
+      "display_name": "ATK A9 Plus NK"
+    },
+    "2,14": {
+      "model_id": "bitmouse_cid_2_14",
+      "brand": "ATK",
+      "display_name": "ATK A9 Pro Max 2.0 NK"
+    },
+    "1,16": {
+      "model_id": "bitmouse_cid_1_16",
+      "brand": "ATK",
+      "display_name": "ATK A9 Mini"
+    },
+    "2,15": {
+      "model_id": "bitmouse_cid_2_15",
+      "brand": "VXE",
+      "display_name": "VXE V3 PRO Max"
+    },
+    "1,9": {
+      "model_id": "bitmouse_cid_1_9",
+      "brand": "ATK",
+      "display_name": "ATK A9 Ultimate +"
+    },
+    "1,6": {
+      "model_id": "bitmouse_cid_1_6",
+      "brand": "ATK",
+      "display_name": "ATK A9 Air +"
+    },
+    "1,7": {
+      "model_id": "bitmouse_cid_1_7",
+      "brand": "ATK",
+      "display_name": "ATK A9 Ultra Max 2.0 +"
+    },
+    "2,16": {
+      "model_id": "bitmouse_cid_2_16",
+      "brand": "ATK",
+      "display_name": "ATK X1 SE Nearlink"
+    },
+    "2,17": {
+      "model_id": "bitmouse_cid_2_17",
+      "brand": "VXE",
+      "display_name": "VXE R1 PRO MAX 2.0 NK"
+    },
+    "1,8": {
+      "model_id": "bitmouse_cid_1_8",
+      "brand": "ATK",
+      "display_name": "ATK ZERO +"
+    },
+    "8,1": {
+      "model_id": "bitmouse_cid_8_1",
+      "brand": "ATK",
+      "display_name": "ATK ZERO +"
+    },
+    "2,19": {
+      "model_id": "bitmouse_cid_2_19",
+      "brand": "VXE",
+      "display_name": "VXE R2 SE NK"
+    },
+    "1,10": {
+      "model_id": "bitmouse_cid_1_10",
+      "brand": "ATK",
+      "display_name": "ATK PHANTOM ULTIMATE"
+    },
+    "2,20": {
+      "model_id": "bitmouse_cid_2_20",
+      "brand": "ATK",
+      "display_name": "ATK A9 NB ULTRA"
+    },
+    "2,21": {
+      "model_id": "bitmouse_cid_2_21",
+      "brand": "VXE",
+      "display_name": "VXE V3 NK"
+    },
+    "1,12": {
+      "model_id": "bitmouse_cid_1_12",
+      "brand": "ATK",
+      "display_name": "ATK X1 ULTIMATE 2.0+"
+    },
+    "2,22": {
+      "model_id": "bitmouse_cid_2_22",
+      "brand": "VXE",
+      "display_name": "VXE R1 SE+"
+    },
+    "1,13": {
+      "model_id": "bitmouse_cid_1_13",
+      "brand": "ATK",
+      "display_name": "ATK X1 Ultra Max 2.0 + Tri-Mode"
+    },
+    "2,25": {
+      "model_id": "bitmouse_cid_2_25",
+      "brand": "ATK",
+      "display_name": "ATK U2 Plus NK"
+    },
+    "1,14": {
+      "model_id": "bitmouse_cid_1_14",
+      "brand": "ATK",
+      "display_name": "ATK X1 Air+"
+    },
+    "1,15": {
+      "model_id": "bitmouse_cid_1_15",
+      "brand": "ATK",
+      "display_name": "ATK A9 Ultimate +"
+    },
+    "2,26": {
+      "model_id": "bitmouse_cid_2_26",
+      "brand": "ATK",
+      "display_name": "ATK A9 Plus NK"
+    },
+    "2,27": {
+      "model_id": "bitmouse_cid_2_27",
+      "brand": "ATK",
+      "display_name": "ATK A9 Pro Max 2.0 NK"
+    },
+    "1,17": {
+      "model_id": "bitmouse_cid_1_17",
+      "brand": "ATK",
+      "display_name": "ATK F1 V3 ULTIMATE+"
+    },
+    "2,29": {
+      "model_id": "bitmouse_cid_2_29",
+      "brand": "ATK",
+      "display_name": "ATK A9 3.0 NK"
+    },
+    "2,30": {
+      "model_id": "bitmouse_cid_2_30",
+      "brand": "VXE",
+      "display_name": "VXE V3 PRO NK"
+    },
+    "1,19": {
+      "model_id": "bitmouse_cid_1_19",
+      "brand": "ATK",
+      "display_name": "ATK F1 V3 ULTRA MAX"
+    },
+    "1,18": {
+      "model_id": "bitmouse_cid_1_18",
+      "brand": "ATK",
+      "display_name": "ATK F1 V3 ULTIMATE+"
+    },
+    "2,33": {
+      "model_id": "bitmouse_cid_2_33",
+      "brand": "ATK",
+      "display_name": "ATK X1 SE NK"
+    },
+    "2,32": {
+      "model_id": "bitmouse_cid_2_32",
+      "brand": "ATK",
+      "display_name": "ATK A9 SE 3.0 NK"
+    },
+    "2,31": {
+      "model_id": "bitmouse_cid_2_31",
+      "brand": "VXE",
+      "display_name": "VXE R1 S NK"
+    },
+    "2,28": {
+      "model_id": "bitmouse_cid_2_28",
+      "brand": "VXE",
+      "display_name": "VXE R1 NK"
+    },
+    "1,21": {
+      "model_id": "bitmouse_cid_1_21",
+      "brand": "ATK",
+      "display_name": "ATK PHANTOM ULTIMATE"
+    },
+    "1,22": {
+      "model_id": "bitmouse_cid_1_22",
+      "brand": "ATK",
+      "display_name": "ATK A9 Ultimate"
+    },
+    "1,24": {
+      "model_id": "bitmouse_cid_1_24",
+      "brand": "ATK",
+      "display_name": "ATK ZERO + GENGAR EDITION"
+    },
+    "2,34": {
+      "model_id": "bitmouse_cid_2_34",
+      "brand": "ATK",
+      "display_name": "ATK A9 Plus 3.0 NK"
+    },
+    "2,35": {
+      "model_id": "bitmouse_cid_2_35",
+      "brand": "ATK",
+      "display_name": "ATK A9 Pro Max 3.0 NK"
+    },
+    "1,26": {
+      "model_id": "bitmouse_cid_1_26",
+      "brand": "ATK",
+      "display_name": "ATK A9 Air"
+    },
+    "1,27": {
+      "model_id": "bitmouse_cid_1_27",
+      "brand": "ATK",
+      "display_name": "ATK F1 V3 ULTIMATE"
+    },
+    "1,28": {
+      "model_id": "bitmouse_cid_1_28",
+      "brand": "ATK",
+      "display_name": "ATK F1 V3 ULTIMATE+"
+    },
+    "2,39": {
+      "model_id": "bitmouse_cid_2_39",
+      "brand": "ATK",
+      "display_name": "ATK A9 SE 3.0 NK"
+    },
+    "2,38": {
+      "model_id": "bitmouse_cid_2_38",
+      "brand": "ATK",
+      "display_name": "ATK A9 3.0 NK"
+    },
+    "2,40": {
+      "model_id": "bitmouse_cid_2_40",
+      "brand": "ATK",
+      "display_name": "ATK A9 Plus 3.0 NK"
+    },
+    "2,41": {
+      "model_id": "bitmouse_cid_2_41",
+      "brand": "ATK",
+      "display_name": "ATK A9 Pro Max 3.0 NK"
+    },
+    "2,44": {
+      "model_id": "bitmouse_cid_2_44",
+      "brand": "VXE",
+      "display_name": "VXE R1 S NK"
+    },
+    "2,43": {
+      "model_id": "bitmouse_cid_2_43",
+      "brand": "VXE",
+      "display_name": "VXE R1 NK"
+    },
+    "2,45": {
+      "model_id": "bitmouse_cid_2_45",
+      "brand": "VXE",
+      "display_name": "VXE V3 NK"
+    },
+    "2,48": {
+      "model_id": "bitmouse_cid_2_48",
+      "brand": "VXE",
+      "display_name": "VXE V3 Silent NK"
+    },
+    "2,49": {
+      "model_id": "bitmouse_cid_2_49",
+      "brand": "VXE",
+      "display_name": "VXE V3 Pro Silent NK"
+    },
+    "2,42": {
+      "model_id": "bitmouse_cid_2_42",
+      "brand": "VXE",
+      "display_name": "VXE R1 SE+"
     }
   }
 }

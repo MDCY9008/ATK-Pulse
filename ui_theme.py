@@ -1041,8 +1041,10 @@ class BatteryRingWidget(QWidget):
         # Voltage line directly beneath percentage (3 decimal places for table consistency)
         if self.mv is not None:
             v_text = f"{self.mv / 1000.0:.3f} V"
+        elif self.percent is not None and not self.disconnected:
+            v_text = "固件电量"
         else:
-            v_text = "电压待获取"
+            v_text = "等待连接"
         p.setPen(qcolor(PALETTE["text_secondary"]))
         v_font = QFont("Microsoft YaHei UI", 11, QFont.Weight.DemiBold)
         p.setFont(v_font)

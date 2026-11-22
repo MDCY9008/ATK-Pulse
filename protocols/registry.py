@@ -62,6 +62,7 @@ class DeviceRegistry:
         multi_protocol_receivers: list[ReceiverEntry] | tuple[ReceiverEntry, ...] = (),
         excluded_vid_pids: set[str] | frozenset[str] = frozenset(),
         compx_cid_mid_catalog: dict[str, dict[str, str]] | None = None,
+        bitmouse_cid_mid_catalog: dict[str, dict[str, str]] | None = None,
     ) -> None:
         self.receivers = receivers
         self.models = models
@@ -70,6 +71,7 @@ class DeviceRegistry:
         self._all_receivers = list(receivers.values()) + self.multi_protocol_receivers
         self.excluded_vid_pids = frozenset(vp.upper() for vp in excluded_vid_pids)
         self.compx_cid_mid_catalog = dict(compx_cid_mid_catalog or {})
+        self.bitmouse_cid_mid_catalog = dict(bitmouse_cid_mid_catalog or {})
 
     @classmethod
     def load(cls, path: Path | None = None) -> "DeviceRegistry":
@@ -136,6 +138,7 @@ class DeviceRegistry:
 
         excluded = frozenset(str(vp).upper() for vp in raw.get("excluded_vid_pids", []))
         cid_mid_catalog = dict(raw.get("compx_cid_mid_catalog") or {})
+        bitmouse_cid_mid_catalog = dict(raw.get("bitmouse_cid_mid_catalog") or {})
 
         return cls(
             receivers=receivers,
@@ -144,6 +147,7 @@ class DeviceRegistry:
             multi_protocol_receivers=multi_receivers,
             excluded_vid_pids=excluded,
             compx_cid_mid_catalog=cid_mid_catalog,
+            bitmouse_cid_mid_catalog=bitmouse_cid_mid_catalog,
         )
 
     def receiver_list(self) -> list[ReceiverEntry]:
@@ -182,6 +186,27 @@ class DeviceRegistry:
             protocol_family="nordic52",
             voltage_capability="wireless_candidate_mv_unverified",
             firmware_percent_step=5,
+        )
+
+    def lookup_bitmouse_cid_mid(self, cid: int, mid: int) -> ModelEntry | None:
+        """Resolve a BITMOUSE (CID, MID) pair to a ModelEntry (no voltage LUT)."""
+        item = self.bitmouse_cid_mid_catalog.get(f"{int(cid)},{int(mid)}")
+        if not item:
+            return None
+        model_id = item["model_id"]
+        existing = self.models.get(model_id)
+        if existing is not None:
+            return existing
+        return ModelEntry(
+            model_id=model_id,
+            brand=item.get("brand", "ATK"),
+            display_name=item.get("display_name", f"ATK Mouse ({cid},{mid})"),
+            verification_tier="catalog_only",
+            calibration_status="no_voltage",
+            lut_profile_id=None,
+            protocol_family="nordic54",
+            voltage_capability="none",
+            firmware_percent_step=None,
         )
 
     def get_model(self, model_id: str) -> ModelEntry | None:

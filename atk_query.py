@@ -78,7 +78,7 @@ def device_guard(mutex_name: str = "Local\\ATK_Battery_373B_11D9_query"):
 
 
 class TargetQuery:
-    """Clean-room whitelist HID query runner supporting nordic52, nordic54, and nano_ff05."""
+    """Clean-room whitelist HID query runner supporting nordic52, nordic54, evision_nearlink, and nano_ff05."""
 
     def __init__(
         self,
@@ -267,6 +267,8 @@ class TargetQuery:
                     codec.response_length,
                     cancel_event=cancel,
                     query_id=query_id,
+                    drain_before_write=True,
+                    response_matcher=codec.make_response_matcher(wired=wired),
                 )
                 received_at = datetime.now().astimezone()
                 if cancel.is_set() or tx_err == "cancelled":
@@ -311,11 +313,12 @@ class TargetQuery:
                         src_mode = "firmware_reported"
 
                     if (
-                        receiver.protocol_family == "nordic52"
+                        receiver.protocol_family in ("nordic52", "nordic54")
                         and receiver.link_role == "wireless_dongle"
                         and not cancel.is_set()
                     ):
                         cache_key = (device_uid, event["collection_path_hash"])
+                        cid_cmd = 0x10 if receiver.protocol_family == "nordic52" else 0x4A
                         if cache_key not in self._cid_mid_cache and hasattr(codec, "build_cid_mid_request"):
                             try:
                                 req_id = codec.build_cid_mid_request()
@@ -327,19 +330,30 @@ class TargetQuery:
                                     query_id=query_id,
                                     read_timeout_ms=250,
                                     write_delay_s=0.02,
+                                    drain_before_write=False,
+                                    response_matcher=codec.make_response_matcher(wired=False, command=cid_cmd),
                                 )
                                 if id_err is None:
                                     parsed_cm = codec.parse_cid_mid_response(raw_id)
                                     if parsed_cm is not None:
                                         self._cid_mid_cache[cache_key] = parsed_cm
                             except Exception:
-                                log.debug("query=%s optional 0x10 CID/MID read skipped", query_id, exc_info=True)
+                                log.debug(
+                                    "query=%s optional %#x CID/MID read skipped",
+                                    query_id,
+                                    cid_cmd,
+                                    exc_info=True,
+                                )
 
                         cached_cm = self._cid_mid_cache.get(cache_key)
                         if cached_cm is not None:
                             cid, mid = cached_cm
                             event["cid_mid"] = f"{cid},{mid}"
-                            cid_model = self.registry.lookup_compx_cid_mid(cid, mid)
+                            cid_model = (
+                                self.registry.lookup_compx_cid_mid(cid, mid)
+                                if receiver.protocol_family == "nordic52"
+                                else self.registry.lookup_bitmouse_cid_mid(cid, mid)
+                            )
                             if cid_model is not None:
                                 if resolved.binding_state == "bound":
                                     pass
@@ -353,7 +367,7 @@ class TargetQuery:
                                             name=cid_model.display_name,
                                             brand=cid_model.brand,
                                             verification_tier=cid_model.verification_tier,
-                                            calibration_status="uncalibrated",
+                                            calibration_status=cid_model.calibration_status,
                                             lut_profile_id=None,
                                             binding_state="cid_mid_resolved",
                                         )

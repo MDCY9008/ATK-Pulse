@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 ATK-Pulse Contributors
-"""ATK-Pulse V0.8.1 — "Iris Greenhouse" (鸢尾温室) Windows dashboard."""
+"""ATK-Pulse V0.8.2 — "Iris Greenhouse" (鸢尾温室) Windows dashboard."""
 from __future__ import annotations
 
 import ctypes
@@ -161,13 +161,14 @@ class TrendChart(QWidget):
         self.sleep_gaps: list[tuple] = []
         self.last_area_filled: bool = False
         self.last_y_bounds: tuple[float, float] = (0.0, 100.0)
+        self.has_lut: bool = True
         self._plot_points: list[tuple[QPointF, dict]] = []
         self._hover_point: tuple[QPointF, dict] | None = None
         self.setMouseTracking(True)
         self.setMinimumHeight(175)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
-    def set_data(self, rows, mode=None, show_firmware=None, auto_scale=None, period_hours=_UNSET, sleep_gaps=None, gap_threshold_s=None):
+    def set_data(self, rows, mode=None, show_firmware=None, auto_scale=None, period_hours=_UNSET, sleep_gaps=None, gap_threshold_s=None, has_lut=None):
         self.rows = rows
         if mode is not None:
             self.mode = mode
@@ -175,6 +176,8 @@ class TrendChart(QWidget):
             self.show_firmware = bool(show_firmware)
         if auto_scale is not None:
             self.auto_scale = bool(auto_scale)
+        if has_lut is not None:
+            self.has_lut = bool(has_lut)
         if period_hours is not _UNSET:
             self.period_hours = period_hours
         self.gap_threshold_s = (
@@ -229,14 +232,20 @@ class TrendChart(QWidget):
             est_pct = best_row.get("percent_est")
             if est_pct is not None:
                 est_line = f"电压估算：{est_pct}%" + ("（低段外推）" if best_row.get("extrapolated_low") else "")
+                fw_line = f"\n固件原报：{best_row['percent']}%"
+                volt_line = f"\n原始电压：{mv_text} · 滤波电压：{v_est_text}"
+            elif not self.has_lut:
+                est_line = f"当前口径：固件原报 {best_row['percent']}%"
+                fw_line = ""
+                volt_line = f"\n原始电压：{mv_text}" if mv is not None else "\n原始电压：当前协议不支持"
             else:
                 est_line = f"电压估算：—（回退固件 {best_row['percent']}%）"
+                fw_line = f"\n固件原报：{best_row['percent']}%"
+                volt_line = f"\n原始电压：{mv_text} · 滤波电压：{v_est_text}"
             mode_text = best_row.get("query_mode") or "unknown"
             tip = (
                 f"时间：{best_row['ts'].strftime('%Y-%m-%d %H:%M:%S')}\n"
-                f"{est_line}\n"
-                f"固件原报：{best_row['percent']}%\n"
-                f"原始电压：{mv_text} · 滤波电压：{v_est_text}\n"
+                f"{est_line}{fw_line}{volt_line}\n"
                 f"来源：{best_row.get('source', '')} · {mode_text}"
             )
             tags = []
@@ -301,10 +310,15 @@ class TrendChart(QWidget):
             self.last_area_filled = False
             p.setPen(ink)
             p.setFont(QFont("Microsoft YaHei UI", 10))
+            empty_msg = (
+                "当前设备协议不上报电池电压，仅记录固件电量"
+                if (self.mode == "mv" and self.rows)
+                else "尚无有效记录，连接鼠标后会自动采集"
+            )
             p.drawText(
                 QRectF(left, top, right - left, bottom - top),
                 Qt.AlignmentFlag.AlignCenter,
-                "尚无有效记录，连接鼠标后会自动采集",
+                empty_msg,
             )
             p.end()
             return
@@ -1880,7 +1894,7 @@ class Dashboard(QMainWindow):
         elif est and est.extrapolated_low:
             ring_sub = "低段外推"
         elif est is None and pct is not None:
-            ring_sub = "固件原报"
+            ring_sub = "固件原报" if mv is not None else ""
         else:
             ring_sub = ""
         self.ring_widget.set_state(
@@ -1927,9 +1941,13 @@ class Dashboard(QMainWindow):
         if event["connected"] and display_pct is not None:
             if self.alert_enabled.isChecked() and display_pct <= self.threshold.value():
                 if not self.warned and self.tray.isVisible():
+                    if est is not None and est.percent_est is not None:
+                        warn_body = f"电压估算电量 {display_pct}%（固件原报 {pct}%），请留意充电。"
+                    else:
+                        warn_body = f"当前电量 {display_pct}%（固件原报），请留意充电。"
                     self.tray.showMessage(
                         "ATK 鼠标低电量",
-                        f"电压估算电量 {display_pct}%（固件原报 {pct}%），请留意充电。",
+                        warn_body,
                         QSystemTrayIcon.MessageIcon.Warning,
                         4000,
                     )
@@ -2029,34 +2047,40 @@ class Dashboard(QMainWindow):
         hist_gaps = compute_sleep_gaps(hist_rows, gap_threshold_s=hist_gap_s)
         home_mode_str = "percent" if self.home_mode.currentIndex() == 0 else "mv"
         hist_mode_str = "percent" if self.history_mode.currentIndex() == 0 else "mv"
+        has_lut = lut_pid is not None
+        effective_show_fw_home = show_fw_home and has_lut
+        effective_show_fw_hist = show_fw_hist and has_lut
 
         self.home_chart.set_data(
             home_rows,
             home_mode_str,
-            show_firmware=show_fw_home,
+            show_firmware=effective_show_fw_home,
             auto_scale=auto_home,
             period_hours=effective_home_hours,
             sleep_gaps=home_gaps,
             gap_threshold_s=home_gap_s,
+            has_lut=has_lut,
         )
         self.history_chart.set_data(
             hist_rows,
             hist_mode_str,
-            show_firmware=show_fw_hist,
+            show_firmware=effective_show_fw_hist,
             auto_scale=auto_hist,
             period_hours=hist_period_hours,
             sleep_gaps=hist_gaps,
             gap_threshold_s=hist_gap_s,
+            has_lut=has_lut,
         )
 
         self.home_legend.setText(
             "— 电量变化   ■ 休眠空窗" if home_mode_str == "percent" else "— 电压变化   ■ 休眠空窗"
         )
-        self.history_legend.setText(
-            "— 电压估算   - - 固件原报   ■ 休眠空窗"
-            if (hist_mode_str == "percent" and show_fw_hist)
-            else ("— 电量变化   ■ 休眠空窗" if hist_mode_str == "percent" else "— 电压变化   ■ 休眠空窗")
-        )
+        if hist_mode_str == "percent" and not has_lut:
+            self.history_legend.setText("— 固件电量   ■ 休眠空窗")
+        elif hist_mode_str == "percent" and effective_show_fw_hist:
+            self.history_legend.setText("— 电压估算   - - 固件原报   ■ 休眠空窗")
+        else:
+            self.history_legend.setText("— 电量变化   ■ 休眠空窗" if hist_mode_str == "percent" else "— 电压变化   ■ 休眠空窗")
 
         self._last_home_rows = home_rows
         self._last_home_period = home_period_data
@@ -2077,11 +2101,10 @@ class Dashboard(QMainWindow):
         self.table.setRowCount(len(rows))
         for i, r in enumerate(rows):
             src = f'{r["source"]} · 恢复首帧' if r.get("recovered") else r["source"]
-            est_txt = (
-                f'{r["percent_est"]}%' + (" (外推)" if r.get("extrapolated_low") else "")
-                if r.get("percent_est") is not None
-                else "— (回退)"
-            )
+            if r.get("percent_est") is not None:
+                est_txt = f'{r["percent_est"]}%' + (" (外推)" if r.get("extrapolated_low") else "")
+            else:
+                est_txt = "— (回退)" if has_lut else "—"
             vals = [
                 r["ts"].strftime("%m/%d %H:%M:%S"),
                 est_txt,
@@ -2156,15 +2179,20 @@ class Dashboard(QMainWindow):
         fw_pct = last.get("percent")
         mv = last.get("voltage_mv")
         est = self._last_estimate
+        model_title = self._current_display_model or MODEL
         if est is not None and est.percent_est is not None:
             head = f"电压估算 {est.percent_est}%" + ("（低段外推）" if est.extrapolated_low else "")
+            mv_str = f"{mv / 1000:.3f} V ({mv} mV)" if mv is not None else "—"
+            detail_line = f"原始电压 {mv_str} · 固件原报 {fw_pct}%"
+        elif mv is not None:
+            head = f"固件原报 {fw_pct}%"
+            detail_line = f"原始电压 {mv / 1000:.3f} V ({mv} mV) · 未标定曲线"
         else:
-            head = f"设备报告 {fw_pct}%"
-        mv_str = f"{mv / 1000:.3f} V ({mv} mV)" if mv is not None else "—"
-        model_title = self._current_display_model or MODEL
+            head = f"固件电量 {fw_pct}%"
+            detail_line = "当前协议仅上报固件电量（无电压字段）"
         tip = (
             f"{model_title} · {head}\n"
-            f"原始电压 {mv_str} · 固件原报 {fw_pct}%\n"
+            f"{detail_line}\n"
             f"接收时间 {at.strftime('%m/%d %H:%M:%S')} · 距今 {age} 秒 · {state}；充电状态 unknown"
         )
         self.tray.setToolTip(tip)

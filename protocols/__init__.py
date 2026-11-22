@@ -3,7 +3,7 @@
 """Clean-room HID protocols and offline device registry for ATK-Pulse."""
 from __future__ import annotations
 
-from .codecs import NanoFf05Codec, Nordic52Codec, Nordic54Codec, ProtocolCodec, get_codec
+from .codecs import NanoFf05Codec, NearlinkCodec, Nordic52Codec, Nordic54Codec, ProtocolCodec, get_codec
 from .hid_transport import HidTransport, matches_hid_rule, query_hid_caps
 from .registry import BindingStore, DeviceRegistry, make_device_uid, resolve_binding
 from .types import (
@@ -29,6 +29,7 @@ __all__ = [
     "HidTransport",
     "ModelEntry",
     "NanoFf05Codec",
+    "NearlinkCodec",
     "Nordic52Codec",
     "Nordic54Codec",
     "PacketReading",

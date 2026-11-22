@@ -250,6 +250,11 @@ class HidTransport:
         query_id: str = "",
         read_timeout_ms: int | None = None,
         write_delay_s: float | None = None,
+        drain_before_write: bool = False,
+        drain_max_frames: int = 4,
+        drain_timeout_ms: int = 30,
+        response_matcher: Callable[[list[int]], bool] | None = None,
+        max_skipped_frames: int = 16,
     ) -> tuple[list[int] | None, str | None]:
         """Send one interrupt report and read one response within bounded timeout slices.
 
@@ -267,6 +272,17 @@ class HidTransport:
         phase = "open"
         try:
             dev.open_path(path)
+            if drain_before_write and drain_max_frames > 0:
+                drain_ms = max(1, min(30, int(drain_timeout_ms)))
+                for _ in range(int(drain_max_frames)):
+                    if cancel_event is not None and cancel_event.is_set():
+                        return None, "cancelled"
+                    try:
+                        drained = dev.read(read_length, timeout_ms=drain_ms)
+                    except OSError:
+                        break
+                    if not drained:
+                        break
             phase = "write"
             req_list = list(request)
             log.debug("query=%s HID write path_hash=%s len=%s", query_id, hash(path), len(req_list))
@@ -283,14 +299,29 @@ class HidTransport:
             phase = "read"
             deadline = time.monotonic() + effective_timeout_ms / 1000.0
             res: list[int] = []
+            skipped = 0
             while True:
                 if cancel_event is not None and cancel_event.is_set():
                     return None, "cancelled"
                 remaining_ms = int((deadline - time.monotonic()) * 1000)
                 if remaining_ms <= 0:
                     break
-                res = list(dev.read(read_length, timeout_ms=min(self.slice_timeout_ms, remaining_ms)) or [])
-                if res:
+                candidate = list(
+                    dev.read(read_length, timeout_ms=min(self.slice_timeout_ms, remaining_ms)) or []
+                )
+                if not candidate:
+                    continue
+                if response_matcher is None or response_matcher(candidate):
+                    res = candidate
+                    break
+                skipped += 1
+                log.debug(
+                    "query=%s skipped non-matching HID frame (%d/%d)",
+                    query_id,
+                    skipped,
+                    max_skipped_frames,
+                )
+                if skipped >= max_skipped_frames:
                     break
             if not res:
                 return None, "timeout"
