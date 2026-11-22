@@ -26,22 +26,29 @@ _INSTANCES: dict[int, "TaskbarBadge"] = {}
 # Win32 constants
 _WS_POPUP = 0x80000000
 _WS_EX_TOPMOST = 0x00000008
+_WS_EX_TRANSPARENT = 0x00000020
 _WS_EX_TOOLWINDOW = 0x00000080
 _WS_EX_LAYERED = 0x00080000
 _WS_EX_NOACTIVATE = 0x08000000
 
 _WM_DESTROY = 0x0002
 _WM_SETTINGCHANGE = 0x001A
+_WM_SETCURSOR = 0x0020
 _WM_MOUSEACTIVATE = 0x0021
+_WM_WINDOWPOSCHANGED = 0x0047
 _WM_MOUSEMOVE = 0x0200
+_WM_LBUTTONDOWN = 0x0201
 _WM_LBUTTONUP = 0x0202
 _WM_RBUTTONUP = 0x0205
+_WM_CAPTURECHANGED = 0x0215
 _WM_MOUSELEAVE = 0x02A3
 _WM_DPICHANGED = 0x02E0
 
 _MA_NOACTIVATE = 3
 _TME_LEAVE = 0x00000002
 _HOVER_DEFAULT = 0xFFFFFFFF
+_IDC_ARROW = 32512
+_IDC_SIZEWE = 32644
 
 _SW_HIDE = 0
 _SWP_NOSIZE = 0x0001
@@ -51,20 +58,44 @@ _SWP_NOACTIVATE = 0x0010
 _SWP_SHOWWINDOW = 0x0040
 _HWND_TOPMOST = wt.HWND(-1)
 _GW_HWNDPREV = 3
+_GW_OWNER = 4
+_GWL_EXSTYLE = -20
+_GA_ROOT = 2
+_GA_ROOTOWNER = 3
 
 _ULW_ALPHA = 0x00000002
 _AC_SRC_OVER = 0x00
 _AC_SRC_ALPHA = 0x01
 _DIB_RGB_COLORS = 0
 _MONITOR_DEFAULTTOPRIMARY = 1
+_MONITOR_DEFAULTTONEAREST = 2
+_DWMWA_CLOAKED = 14
 
-_FULLSCREEN_IGNORED_CLASSES = frozenset({
-    "",
+_EVENT_SYSTEM_FOREGROUND = 0x0003
+_EVENT_SYSTEM_MINIMIZESTART = 0x0016
+_EVENT_SYSTEM_MINIMIZEEND = 0x0017
+_WINEVENT_OUTOFCONTEXT = 0x0000
+
+_DESKTOP_HOST_CLASSES = frozenset({
     "Progman",
     "WorkerW",
+    "SHELLDLL_DefView",
+    "SysListView32",
     "Shell_TrayWnd",
     "Shell_SecondaryTrayWnd",
     "NotifyIconOverflowWindow",
+    "XamlExplorerHostIslandWindow",
+    "TopLevelWindowForOverflowXamlIsland",
+    "TaskListThumbnailWnd",
+    "Shell_InputSwitchTopLevelWindow",
+    "Windows.UI.Input.InputSite.WindowClass",
+    "EdgeUiInputTopWndClass",
+    "NativeHWNDHost",
+    "#32769",
+})
+
+_FULLSCREEN_IGNORED_CLASSES = _DESKTOP_HOST_CLASSES | frozenset({
+    "",
     "Windows.UI.Core.CoreWindow",
     _CLASS_NAME,
 })
@@ -160,6 +191,7 @@ def render_badge_image(
     stale: bool = False,
     light_theme: bool = True,
     hovered: bool = False,
+    drag_unlocked: bool = False,
     dpi: int = 96,
     height_px: int | None = None,
     low_threshold: int = 20,
@@ -201,8 +233,22 @@ def render_badge_image(
     hit_color = QColor(0, 0, 0, 1) if light_theme else QColor(255, 255, 255, 1)
     p.fillRect(QRectF(0.0, 0.0, float(w_px), float(h_px)), hit_color)
 
-    # 2) Subtle Win11-style rounded capsule ONLY while hovered
-    if hovered:
+    # 2) Subtle unlocked dashed guide OR Win11-style hover rounded capsule
+    if drag_unlocked:
+        inset = max(1.0, round(1.5 * scale))
+        radius = max(4.0, 5.5 * scale)
+        guide_rect = QRectF(inset, inset, w_px - 2 * inset, h_px - 2 * inset)
+        dash_col = QColor(0x6E, 0x5A, 0xA8, 145) if light_theme else QColor(0xB8, 0xA6, 0xEE, 165)
+        fill_col = (
+            QColor(0x7C, 0x64, 0xB8, 18 if hovered else 10)
+            if light_theme
+            else QColor(0xA6, 0x8E, 0xE6, 28 if hovered else 14)
+        )
+        pen = QPen(dash_col, max(1.0, 1.0 * scale), Qt.PenStyle.DashLine)
+        p.setPen(pen)
+        p.setBrush(fill_col)
+        p.drawRoundedRect(guide_rect, radius, radius)
+    elif hovered:
         inset = max(1.0, round(2.0 * scale))
         radius = max(4.0, 5.5 * scale)
         hover_rect = QRectF(inset, inset, w_px - 2 * inset, h_px - 2 * inset)
@@ -273,6 +319,30 @@ def render_badge_image(
     return img
 
 
+def logical_x_to_clamped_physical_x(
+    custom_x: int,
+    tray_rect: tuple[int, int, int, int],
+    badge_w: int,
+    dpi: int = 96,
+) -> int | None:
+    """Convert logical offset from taskbar left edge into physical screen X clamped inside taskbar."""
+    tray_l, _tray_t, tray_r, _tray_b = tray_rect
+    scale = max(1.0, float(dpi) / 96.0)
+    margin = max(2, round(4 * scale))
+    min_x = tray_l + margin
+    max_x = tray_r - badge_w - margin
+    if max_x < min_x:
+        return None
+    raw_x = tray_l + round(float(custom_x) * scale)
+    return max(min_x, min(max_x, raw_x))
+
+
+def physical_x_to_logical_x(phys_x: int, tray_l: int, dpi: int = 96) -> int:
+    """Convert physical screen X into DPI-independent logical offset from taskbar left edge."""
+    scale = max(1.0, float(dpi) / 96.0)
+    return max(0, round((float(phys_x) - float(tray_l)) / scale))
+
+
 def compute_badge_rect(
     tray_rect: tuple[int, int, int, int],
     notify_rect: tuple[int, int, int, int],
@@ -280,13 +350,24 @@ def compute_badge_rect(
     badge_w: int,
     badge_h: int,
     dpi: int = 96,
+    *,
+    position_mode: str = "auto",
+    custom_x: int | None = None,
 ) -> tuple[int, int, int, int] | None:
-    """Compute physical screen (x, y, w, h) immediately left of TrayNotifyWnd."""
+    """Compute physical screen (x, y, w, h) either auto-docked left of TrayNotifyWnd or custom-clamped."""
     tray_l, tray_t, tray_r, tray_b = tray_rect
     tray_w = tray_r - tray_l
     tray_h = tray_b - tray_t
     if tray_w <= tray_h or tray_h < 20:
         return None
+
+    y = tray_t + max(0, (tray_h - badge_h) // 2)
+
+    if position_mode == "custom" and custom_x is not None:
+        x = logical_x_to_clamped_physical_x(int(custom_x), tray_rect, badge_w, dpi)
+        if x is None:
+            return None
+        return (x, y, badge_w, badge_h)
 
     notify_l, _notify_t, notify_r, _notify_b = notify_rect
     if notify_r <= notify_l or notify_l <= tray_l:
@@ -295,7 +376,6 @@ def compute_badge_rect(
     scale = max(1.0, float(dpi) / 96.0)
     gap = max(3, round(5 * scale))
     x = notify_l - gap - badge_w
-    y = tray_t + max(0, (tray_h - badge_h) // 2)
 
     if x < tray_l + 2:
         return None
@@ -315,11 +395,21 @@ def should_hide_for_fullscreen(
     fg_class: str,
     mon_rect: tuple[int, int, int, int] | None,
     quns_state: int | None = None,
+    *,
+    fg_is_desktop_or_shell: bool = False,
+    fg_ancestor_classes: tuple[str, ...] = (),
+    fg_on_taskbar_monitor: bool = True,
 ) -> bool:
-    """Return True when a fullscreen app/game or presentation mode is active."""
-    if quns_state in (2, 3, 4):
+    """Return True when a fullscreen app/game or presentation mode is active on the taskbar monitor."""
+    # QUNS_RUNNING_D3D_FULL_SCREEN (3) and QUNS_PRESENTATION_MODE (4) unconditionally hide.
+    # Avoid hiding on QUNS_BUSY (2) alone because live wallpapers / secondary monitors trigger it.
+    if quns_state in (3, 4):
         return True
+    if fg_is_desktop_or_shell or not fg_on_taskbar_monitor:
+        return False
     if fg_class in _FULLSCREEN_IGNORED_CLASSES:
+        return False
+    if any(cls in _DESKTOP_HOST_CLASSES for cls in fg_ancestor_classes):
         return False
     if fg_rect is None or mon_rect is None:
         return False
@@ -328,6 +418,28 @@ def should_hide_for_fullscreen(
     if fr <= fl or fb <= ft or mr <= ml or mb <= mt:
         return False
     return fl <= ml and ft <= mt and fr >= mr and fb >= mb
+
+
+def is_badge_above_tray_in_zorder(
+    badge_hwnd: int,
+    tray_hwnd: int,
+    get_prev_window,
+    *,
+    max_steps: int = 256,
+) -> bool:
+    """Walk GW_HWNDPREV upward from Shell_TrayWnd to verify badge sits above it in Z-order."""
+    if not badge_hwnd:
+        return False
+    if not tray_hwnd:
+        return True
+    cur = int(tray_hwnd)
+    for _ in range(max(1, int(max_steps))):
+        cur = int(get_prev_window(cur) or 0)
+        if not cur:
+            return False
+        if cur == int(badge_hwnd):
+            return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -423,6 +535,14 @@ if sys.platform == "win32":
     _user32.DefWindowProcW.restype = _LRESULT
     _user32.LoadCursorW.argtypes = (wt.HINSTANCE, ctypes.c_void_p)
     _user32.LoadCursorW.restype = wt.HANDLE
+    _user32.SetCursor.argtypes = (wt.HANDLE,)
+    _user32.SetCursor.restype = wt.HANDLE
+    _user32.GetCursorPos.argtypes = (ctypes.POINTER(_POINT),)
+    _user32.GetCursorPos.restype = wt.BOOL
+    _user32.SetCapture.argtypes = (wt.HWND,)
+    _user32.SetCapture.restype = wt.HWND
+    _user32.ReleaseCapture.argtypes = ()
+    _user32.ReleaseCapture.restype = wt.BOOL
     _user32.TrackMouseEvent.argtypes = (ctypes.POINTER(_TRACKMOUSEEVENT),)
     _user32.TrackMouseEvent.restype = wt.BOOL
     _user32.FindWindowW.argtypes = (wt.LPCWSTR, wt.LPCWSTR)
@@ -433,6 +553,8 @@ if sys.platform == "win32":
     _user32.GetWindowRect.restype = wt.BOOL
     _user32.IsWindowVisible.argtypes = (wt.HWND,)
     _user32.IsWindowVisible.restype = wt.BOOL
+    _user32.IsIconic.argtypes = (wt.HWND,)
+    _user32.IsIconic.restype = wt.BOOL
     _user32.GetDpiForWindow.argtypes = (wt.HWND,)
     _user32.GetDpiForWindow.restype = wt.UINT
     _user32.ShowWindow.argtypes = (wt.HWND, ctypes.c_int)
@@ -441,8 +563,18 @@ if sys.platform == "win32":
     _user32.SetWindowPos.restype = wt.BOOL
     _user32.GetWindow.argtypes = (wt.HWND, wt.UINT)
     _user32.GetWindow.restype = wt.HWND
+    _user32.GetParent.argtypes = (wt.HWND,)
+    _user32.GetParent.restype = wt.HWND
+    _user32.GetAncestor.argtypes = (wt.HWND, wt.UINT)
+    _user32.GetAncestor.restype = wt.HWND
+    _user32.GetWindowLongW.argtypes = (wt.HWND, ctypes.c_int)
+    _user32.GetWindowLongW.restype = ctypes.c_long
     _user32.GetForegroundWindow.argtypes = ()
     _user32.GetForegroundWindow.restype = wt.HWND
+    _user32.GetShellWindow.argtypes = ()
+    _user32.GetShellWindow.restype = wt.HWND
+    _user32.GetDesktopWindow.argtypes = ()
+    _user32.GetDesktopWindow.restype = wt.HWND
     _user32.GetClassNameW.argtypes = (wt.HWND, wt.LPWSTR, ctypes.c_int)
     _user32.GetClassNameW.restype = ctypes.c_int
     _user32.MonitorFromWindow.argtypes = (wt.HWND, wt.DWORD)
@@ -462,6 +594,23 @@ if sys.platform == "win32":
     _user32.InvalidateRect.argtypes = (wt.HWND, ctypes.POINTER(wt.RECT), wt.BOOL)
     _user32.InvalidateRect.restype = wt.BOOL
 
+    _WINEVENTPROC = ctypes.WINFUNCTYPE(
+        None, wt.HANDLE, wt.DWORD, wt.HWND, wt.LONG, wt.LONG, wt.DWORD, wt.DWORD,
+    )
+    _user32.SetWinEventHook.argtypes = (
+        wt.DWORD, wt.DWORD, wt.HMODULE, _WINEVENTPROC, wt.DWORD, wt.DWORD, wt.DWORD,
+    )
+    _user32.SetWinEventHook.restype = wt.HANDLE
+    _user32.UnhookWinEvent.argtypes = (wt.HANDLE,)
+    _user32.UnhookWinEvent.restype = wt.BOOL
+
+    try:
+        _dwmapi = ctypes.WinDLL("dwmapi", use_last_error=True)
+        _dwmapi.DwmGetWindowAttribute.argtypes = (wt.HWND, wt.DWORD, ctypes.c_void_p, wt.DWORD)
+        _dwmapi.DwmGetWindowAttribute.restype = ctypes.c_long
+    except OSError:
+        _dwmapi = None
+
     _gdi32.CreateCompatibleDC.argtypes = (wt.HDC,)
     _gdi32.CreateCompatibleDC.restype = wt.HDC
     _gdi32.DeleteDC.argtypes = (wt.HDC,)
@@ -480,6 +629,50 @@ if sys.platform == "win32":
     _shell32.SHQueryUserNotificationState.restype = ctypes.c_long
 
     _WM_TASKBARCREATED = _user32.RegisterWindowMessageW("TaskbarCreated")
+
+    def _get_window_class(hwnd: int) -> str:
+        if not hwnd:
+            return ""
+        buf = ctypes.create_unicode_buffer(128)
+        if _user32.GetClassNameW(hwnd, buf, 128) <= 0:
+            return ""
+        return buf.value
+
+    def _is_window_cloaked(hwnd: int) -> bool:
+        if not hwnd or _dwmapi is None:
+            return False
+        cloaked = wt.DWORD(0)
+        hr = _dwmapi.DwmGetWindowAttribute(
+            hwnd, _DWMWA_CLOAKED, ctypes.byref(cloaked), ctypes.sizeof(cloaked)
+        )
+        return hr == 0 and bool(cloaked.value)
+
+    def _is_window_behind_desktop(hwnd: int, shell_hwnd: int) -> bool:
+        """Return True if Shell desktop host sits above hwnd in Z-order (e.g. live wallpaper layers)."""
+        if not hwnd:
+            return False
+        cur = _user32.GetWindow(hwnd, _GW_HWNDPREV)
+        steps = 0
+        while cur and steps < 256:
+            cur_int = int(cur)
+            if shell_hwnd and cur_int == shell_hwnd:
+                return True
+            if _user32.FindWindowExW(cur, None, "SHELLDLL_DefView", None):
+                return True
+            cur = _user32.GetWindow(cur, _GW_HWNDPREV)
+            steps += 1
+        return False
+
+    def _dispatch_winevent(
+        _hook: int, event: int, _hwnd: int, _id_obj: int, _id_child: int, _thread: int, _time: int
+    ) -> None:
+        for badge in list(_INSTANCES.values()):
+            try:
+                badge._on_win_event(int(event))
+            except Exception:
+                log.debug("TaskbarBadge WinEvent handler error", exc_info=True)
+
+    _GLOBAL_WINEVENTPROC = _WINEVENTPROC(_dispatch_winevent)
 
     def _dispatch_wndproc(hwnd: int, msg: int, wparam: int, lparam: int) -> int:
         badge = _INSTANCES.get(int(hwnd))
@@ -528,22 +721,38 @@ class TaskbarBadge:
         enabled: bool = True,
         on_left_click=None,
         on_right_click=None,
+        on_position_changed=None,
         low_threshold: int = 20,
+        position_mode: str = "auto",
+        custom_x: int | None = None,
         parent=None,
     ) -> None:
         self.enabled = bool(enabled)
         self.on_left_click = on_left_click
         self.on_right_click = on_right_click
+        self.on_position_changed = on_position_changed
         self.percent: int | None = None
         self.stale: bool = True
         self.low_threshold: int = int(low_threshold)
         self.tooltip_text: str = "ATK-Pulse · 等待设备连接"
         self.degraded: bool = False
+        self.position_mode: str = "custom" if position_mode == "custom" and custom_x is not None else "auto"
+        self.custom_x: int | None = int(custom_x) if (self.position_mode == "custom" and custom_x is not None) else None
 
         self._hwnd: int | None = None
         self._visible: bool = False
         self._hovered: bool = False
         self._tracking_leave: bool = False
+        self._in_sync: bool = False
+        self._drag_unlocked: bool = False
+        self._dragging: bool = False
+        self._drag_moved: bool = False
+        self._drag_start_cursor_x: int = 0
+        self._drag_start_win_x: int = 0
+        self._drag_bounds: tuple[int, int, int, int] | None = None
+        self._last_tray_rect: tuple[int, int, int, int] | None = None
+        self._last_dpi: int = 96
+        self._event_hooks: list[int] = []
         self._light_theme: bool = read_system_uses_light_theme()
         self._last_render_key: tuple | None = None
         self._last_rect: tuple[int, int, int, int] | None = None
@@ -552,13 +761,23 @@ class TaskbarBadge:
         self._sync_timer.setInterval(500)
         self._sync_timer.timeout.connect(self.sync)
 
+        self._immediate_sync_timer = QTimer(parent)
+        self._immediate_sync_timer.setSingleShot(True)
+        self._immediate_sync_timer.setInterval(0)
+        self._immediate_sync_timer.timeout.connect(self.sync)
+
+        self._followup_sync_timer = QTimer(parent)
+        self._followup_sync_timer.setSingleShot(True)
+        self._followup_sync_timer.setInterval(60)
+        self._followup_sync_timer.timeout.connect(self.sync)
+
         self._hover_timer = QTimer(parent)
         self._hover_timer.setSingleShot(True)
         self._hover_timer.setInterval(300)
         self._hover_timer.timeout.connect(self._show_tooltip)
 
     def start(self) -> bool:
-        """Create Win32 layered window and start lightweight 500 ms sync."""
+        """Create Win32 layered window and start lightweight 500 ms sync + WinEvent hooks."""
         if sys.platform != "win32":
             self.degraded = True
             return False
@@ -566,6 +785,7 @@ class TaskbarBadge:
             return False
         try:
             self._create_window()
+            self._install_event_hooks()
             if self.enabled:
                 self.sync()
             self._sync_timer.start()
@@ -575,6 +795,44 @@ class TaskbarBadge:
             self.degraded = True
             self.destroy()
             return False
+
+    def _install_event_hooks(self) -> None:
+        if sys.platform != "win32" or self._event_hooks:
+            return
+        try:
+            for ev_min, ev_max in (
+                (_EVENT_SYSTEM_FOREGROUND, _EVENT_SYSTEM_FOREGROUND),
+                (_EVENT_SYSTEM_MINIMIZESTART, _EVENT_SYSTEM_MINIMIZEEND),
+            ):
+                hook = _user32.SetWinEventHook(
+                    ev_min, ev_max, None, _GLOBAL_WINEVENTPROC, 0, 0, _WINEVENT_OUTOFCONTEXT
+                )
+                if hook:
+                    self._event_hooks.append(int(hook))
+        except Exception:
+            log.debug("TaskbarBadge WinEventHook setup skipped", exc_info=True)
+
+    def _uninstall_event_hooks(self) -> None:
+        if sys.platform != "win32" or not self._event_hooks:
+            return
+        for hook in self._event_hooks:
+            try:
+                _user32.UnhookWinEvent(hook)
+            except Exception:
+                pass
+        self._event_hooks.clear()
+
+    def _on_win_event(self, _event: int) -> None:
+        if not self._in_sync:
+            self.nudge_topmost()
+
+    def nudge_topmost(self) -> None:
+        """Coalesced fast sync on foreground/minimize/hide changes to prevent Shell_TrayWnd occlusion."""
+        if not self.enabled or self.degraded or not self._hwnd:
+            return
+        if not self._immediate_sync_timer.isActive():
+            self._immediate_sync_timer.start()
+        self._followup_sync_timer.start()
 
     def _create_window(self) -> None:
         if self._hwnd:
@@ -595,9 +853,68 @@ class TaskbarBadge:
         self._hwnd = int(hwnd)
         _INSTANCES[self._hwnd] = self
 
+    @property
+    def drag_unlocked(self) -> bool:
+        return self._drag_unlocked
+
+    @property
+    def current_logical_x(self) -> int | None:
+        if self._last_rect is not None and self._last_tray_rect is not None:
+            return physical_x_to_logical_x(self._last_rect[0], self._last_tray_rect[0], self._last_dpi)
+        return self.custom_x
+
+    def set_drag_unlocked(self, unlocked: bool) -> None:
+        new_state = bool(unlocked)
+        if not new_state and self._dragging:
+            self._finish_drag(commit=self._drag_moved)
+        self._drag_unlocked = new_state
+        self._last_render_key = None
+        if self.enabled and not self.degraded and self._hwnd:
+            self.sync()
+
+    def set_position(self, mode: str, custom_x: int | None = None) -> None:
+        if mode == "custom" and custom_x is not None:
+            self.position_mode = "custom"
+            self.custom_x = max(0, int(custom_x))
+        else:
+            self.position_mode = "auto"
+            self.custom_x = None
+        if self.enabled and not self.degraded and self._hwnd:
+            self.sync()
+
+    def _get_cursor_screen_x(self) -> int:
+        pt = _POINT()
+        _user32.GetCursorPos(ctypes.byref(pt))
+        return int(pt.x)
+
+    def _finish_drag(self, *, commit: bool) -> None:
+        if not self._dragging:
+            return
+        self._dragging = False
+        moved = self._drag_moved
+        self._drag_moved = False
+        self._drag_bounds = None
+        if sys.platform == "win32":
+            try:
+                _user32.ReleaseCapture()
+            except Exception:
+                pass
+        if (
+            commit
+            and moved
+            and self.on_position_changed is not None
+            and self.position_mode == "custom"
+            and self.custom_x is not None
+        ):
+            mode = self.position_mode
+            cx = int(self.custom_x)
+            QTimer.singleShot(0, lambda m=mode, x=cx: self.on_position_changed(m, x))
+
     def set_enabled(self, enabled: bool) -> None:
         self.enabled = bool(enabled)
         if not self.enabled:
+            if self._dragging:
+                self._finish_drag(commit=False)
             self._hide_window()
         elif not self.degraded:
             if not self._hwnd:
@@ -661,15 +978,70 @@ class TaskbarBadge:
     def _handle_win32_message(self, hwnd: int, msg: int, wparam: int, lparam: int) -> tuple[bool, int]:
         if msg == _WM_MOUSEACTIVATE:
             return True, _MA_NOACTIVATE
+        if msg == _WM_SETCURSOR:
+            cursor_id = _IDC_SIZEWE if self._drag_unlocked else _IDC_ARROW
+            _user32.SetCursor(_user32.LoadCursorW(None, ctypes.c_void_p(cursor_id)))
+            return True, 1
+        if msg == _WM_LBUTTONDOWN:
+            if self._drag_unlocked and self._last_rect is not None and self._last_tray_rect is not None:
+                self._hover_timer.stop()
+                QToolTip.hideText()
+                tray_l, _t, tray_r, _b = self._last_tray_rect
+                dpi = self._last_dpi
+                scale = max(1.0, float(dpi) / 96.0)
+                margin = max(2, round(4 * scale))
+                min_x = tray_l + margin
+                max_x = tray_r - self._last_rect[2] - margin
+                if max_x >= min_x:
+                    self._dragging = True
+                    self._drag_moved = False
+                    self._drag_start_cursor_x = self._get_cursor_screen_x()
+                    self._drag_start_win_x = self._last_rect[0]
+                    self._drag_bounds = (min_x, max_x, tray_l, dpi)
+                    _user32.SetCapture(hwnd)
+                return True, 0
+            return False, 0
         if msg == _WM_LBUTTONUP:
+            if self._dragging:
+                self._finish_drag(commit=True)
+                return True, 0
+            if self._drag_unlocked:
+                return True, 0
             if self.on_left_click:
                 QTimer.singleShot(0, self.on_left_click)
             return True, 0
+        if msg == _WM_CAPTURECHANGED:
+            if self._dragging:
+                self._finish_drag(commit=self._drag_moved)
+            return False, 0
         if msg == _WM_RBUTTONUP:
+            if self._dragging:
+                self._finish_drag(commit=False)
             if self.on_right_click:
                 QTimer.singleShot(0, self.on_right_click)
             return True, 0
         if msg == _WM_MOUSEMOVE:
+            if self._dragging and self._drag_bounds is not None and self._last_rect is not None:
+                cur_x = self._get_cursor_screen_x()
+                delta_x = cur_x - self._drag_start_cursor_x
+                if abs(delta_x) >= 2:
+                    self._drag_moved = True
+                min_x, max_x, tray_l, dpi = self._drag_bounds
+                new_x = max(min_x, min(max_x, self._drag_start_win_x + delta_x))
+                old_x, y, w, h = self._last_rect
+                if new_x != old_x:
+                    self._in_sync = True
+                    try:
+                        _user32.SetWindowPos(
+                            hwnd, _HWND_TOPMOST, new_x, y, w, h,
+                            _SWP_NOACTIVATE | _SWP_NOSIZE | _SWP_SHOWWINDOW,
+                        )
+                    finally:
+                        self._in_sync = False
+                    self._last_rect = (new_x, y, w, h)
+                    self.position_mode = "custom"
+                    self.custom_x = physical_x_to_logical_x(new_x, tray_l, dpi)
+                return True, 0
             if not self._tracking_leave:
                 tme = _TRACKMOUSEEVENT(
                     ctypes.sizeof(_TRACKMOUSEEVENT), _TME_LEAVE, hwnd, _HOVER_DEFAULT
@@ -701,6 +1073,10 @@ class TaskbarBadge:
         if _WM_TASKBARCREATED and msg == _WM_TASKBARCREATED:
             QTimer.singleShot(500, self._rebind_after_explorer_restart)
             return True, 0
+        if msg == _WM_WINDOWPOSCHANGED:
+            if not self._in_sync and self.enabled and not self.degraded:
+                self.nudge_topmost()
+            return False, 0
         if msg == _WM_DESTROY:
             _INSTANCES.pop(hwnd, None)
             return False, 0
@@ -741,15 +1117,68 @@ class TaskbarBadge:
                 mon_tuple = (r.left, r.top, r.right, r.bottom)
 
         fg_hwnd = _user32.GetForegroundWindow()
+        shell_hwnd = int(_user32.GetShellWindow() or 0)
+        desktop_hwnd = int(_user32.GetDesktopWindow() or 0)
         fg_tuple = None
         fg_cls = ""
-        if fg_hwnd:
-            buf = ctypes.create_unicode_buffer(128)
-            _user32.GetClassNameW(fg_hwnd, buf, 128)
-            fg_cls = buf.value
+        fg_is_desktop_or_shell = False
+        fg_ancestor_classes: tuple[str, ...] = ()
+        fg_on_taskbar_monitor = True
+
+        if not fg_hwnd or int(fg_hwnd) in (shell_hwnd, desktop_hwnd, int(tray_hwnd)):
+            fg_is_desktop_or_shell = True
+            if fg_hwnd:
+                fg_cls = _get_window_class(int(fg_hwnd))
+        else:
+            fg_int = int(fg_hwnd)
+            fg_cls = _get_window_class(fg_int)
             fg_rc = wt.RECT()
             if _user32.GetWindowRect(fg_hwnd, ctypes.byref(fg_rc)):
                 fg_tuple = (fg_rc.left, fg_rc.top, fg_rc.right, fg_rc.bottom)
+
+            if (
+                not _user32.IsWindowVisible(fg_hwnd)
+                or _user32.IsIconic(fg_hwnd)
+                or _is_window_cloaked(fg_int)
+            ):
+                fg_is_desktop_or_shell = True
+
+            ex_style = int(_user32.GetWindowLongW(fg_hwnd, _GWL_EXSTYLE))
+            if ex_style & (_WS_EX_TOOLWINDOW | _WS_EX_NOACTIVATE | _WS_EX_TRANSPARENT):
+                fg_is_desktop_or_shell = True
+
+            related = [
+                int(_user32.GetParent(fg_hwnd) or 0),
+                int(_user32.GetAncestor(fg_hwnd, _GA_ROOT) or 0),
+                int(_user32.GetAncestor(fg_hwnd, _GA_ROOTOWNER) or 0),
+                int(_user32.GetWindow(fg_hwnd, _GW_OWNER) or 0),
+            ]
+            anc_classes: list[str] = []
+            for anc_hwnd in related:
+                if not anc_hwnd or anc_hwnd == fg_int:
+                    continue
+                if anc_hwnd in (shell_hwnd, desktop_hwnd, int(tray_hwnd)):
+                    fg_is_desktop_or_shell = True
+                anc_cls = _get_window_class(anc_hwnd)
+                if anc_cls:
+                    anc_classes.append(anc_cls)
+                    if anc_cls in _DESKTOP_HOST_CLASSES:
+                        fg_is_desktop_or_shell = True
+            fg_ancestor_classes = tuple(anc_classes)
+
+            if _user32.FindWindowExW(fg_hwnd, None, "SHELLDLL_DefView", None):
+                fg_is_desktop_or_shell = True
+
+            if (
+                not fg_is_desktop_or_shell
+                and fg_cls not in _FULLSCREEN_IGNORED_CLASSES
+                and _is_window_behind_desktop(fg_int, shell_hwnd)
+            ):
+                fg_is_desktop_or_shell = True
+
+            if hmon:
+                fg_mon = _user32.MonitorFromWindow(fg_hwnd, _MONITOR_DEFAULTTONEAREST)
+                fg_on_taskbar_monitor = (not fg_mon) or (int(fg_mon) == int(hmon))
 
         quns = ctypes.c_int(0)
         quns_val = quns.value if _shell32.SHQueryUserNotificationState(ctypes.byref(quns)) == 0 else None
@@ -763,20 +1192,33 @@ class TaskbarBadge:
             "mon_rect": mon_tuple,
             "fg_rect": fg_tuple,
             "fg_class": fg_cls,
+            "fg_is_desktop_or_shell": fg_is_desktop_or_shell,
+            "fg_ancestor_classes": fg_ancestor_classes,
+            "fg_on_taskbar_monitor": fg_on_taskbar_monitor,
             "quns_state": quns_val,
         }
 
     def _is_tray_above_badge(self, tray_hwnd: int) -> bool:
-        """Walk GW_HWNDPREV from badge to check if Shell_TrayWnd rose above us."""
-        if not self._hwnd:
+        """Return True when badge has fallen below Shell_TrayWnd in Z-order."""
+        if not self._hwnd or not tray_hwnd:
             return False
-        cur = _user32.GetWindow(self._hwnd, _GW_HWNDPREV)
-        steps = 0
-        while cur and steps < 64:
-            if int(cur) == tray_hwnd:
+        return not is_badge_above_tray_in_zorder(
+            self._hwnd,
+            tray_hwnd,
+            lambda h: int(_user32.GetWindow(h, _GW_HWNDPREV) or 0),
+        )
+
+    def _needs_topmost_reassert(self, tray_hwnd: int) -> bool:
+        """Check visibility, WS_EX_TOPMOST bit, and relative Z-order against Shell_TrayWnd."""
+        if not self._hwnd or not self._visible:
+            return True
+        if sys.platform == "win32":
+            if not _user32.IsWindowVisible(self._hwnd):
                 return True
-            cur = _user32.GetWindow(cur, _GW_HWNDPREV)
-            steps += 1
+            if not (int(_user32.GetWindowLongW(self._hwnd, _GWL_EXSTYLE)) & _WS_EX_TOPMOST):
+                return True
+            if self._is_tray_above_badge(tray_hwnd):
+                return True
         return False
 
     def _present_image(self, img: QImage, x: int, y: int, *, raise_topmost: bool) -> None:
@@ -852,16 +1294,36 @@ class TaskbarBadge:
         if not self.enabled or self.degraded or not self._hwnd:
             self._hide_window()
             return
+        if self._dragging:
+            return
         try:
             geo = self._probe_taskbar_geometry()
-            if geo is None or should_hide_for_fullscreen(
-                geo["fg_rect"], geo["fg_class"], geo["mon_rect"], geo["quns_state"]
+            if geo is None:
+                self._hide_window()
+                return
+            mon_rect = geo.get("mon_rect")
+            tray_rect = geo["tray_rect"]
+            if mon_rect is not None:
+                visible_h = min(tray_rect[3], mon_rect[3]) - max(tray_rect[1], mon_rect[1])
+                if visible_h < 20:
+                    self._hide_window()
+                    return
+            if should_hide_for_fullscreen(
+                geo["fg_rect"],
+                geo["fg_class"],
+                mon_rect,
+                geo["quns_state"],
+                fg_is_desktop_or_shell=bool(geo.get("fg_is_desktop_or_shell", False)),
+                fg_ancestor_classes=tuple(geo.get("fg_ancestor_classes") or ()),
+                fg_on_taskbar_monitor=bool(geo.get("fg_on_taskbar_monitor", True)),
             ):
                 self._hide_window()
                 return
 
             dpi = geo["dpi"]
-            tray_h = geo["tray_rect"][3] - geo["tray_rect"][1]
+            self._last_tray_rect = tray_rect
+            self._last_dpi = dpi
+            tray_h = tray_rect[3] - tray_rect[1]
             scale = max(1.0, float(dpi) / 96.0)
             target_h = min(max(24, tray_h - max(8, round(10 * scale))), max(28, round(36 * scale)))
 
@@ -871,6 +1333,7 @@ class TaskbarBadge:
                 self.low_threshold,
                 self._light_theme,
                 self._hovered,
+                self._drag_unlocked,
                 dpi,
                 target_h,
             )
@@ -880,6 +1343,7 @@ class TaskbarBadge:
                     stale=self.stale,
                     light_theme=self._light_theme,
                     hovered=self._hovered,
+                    drag_unlocked=self._drag_unlocked,
                     dpi=dpi,
                     height_px=target_h,
                     low_threshold=self.low_threshold,
@@ -892,33 +1356,45 @@ class TaskbarBadge:
                 rect_changed = False
 
             rect = compute_badge_rect(
-                geo["tray_rect"], geo["notify_rect"], geo["rebar_rect"],
+                tray_rect, geo["notify_rect"], geo["rebar_rect"],
                 img.width(), img.height(), dpi,
+                position_mode=self.position_mode,
+                custom_x=self.custom_x,
             )
             if rect is None:
                 self._hide_window()
                 return
 
-            need_topmost = (not self._visible) or self._is_tray_above_badge(geo["tray_hwnd"])
-            if rect_changed or rect != self._last_rect:
-                self._present_image(img, rect[0], rect[1], raise_topmost=need_topmost)
-                self._last_rect = rect
-            elif need_topmost:
-                _user32.SetWindowPos(
-                    self._hwnd, _HWND_TOPMOST, rect[0], rect[1], rect[2], rect[3],
-                    _SWP_NOACTIVATE | _SWP_SHOWWINDOW,
-                )
-                self._visible = True
+            need_topmost = self._needs_topmost_reassert(int(geo.get("tray_hwnd") or 0))
+            self._in_sync = True
+            try:
+                if rect_changed or rect != self._last_rect:
+                    self._present_image(img, rect[0], rect[1], raise_topmost=need_topmost)
+                    self._last_rect = rect
+                elif need_topmost:
+                    _user32.SetWindowPos(
+                        self._hwnd, _HWND_TOPMOST, rect[0], rect[1], rect[2], rect[3],
+                        _SWP_NOACTIVATE | _SWP_SHOWWINDOW,
+                    )
+                    self._visible = True
+            finally:
+                self._in_sync = False
         except Exception as exc:
             log.warning("TaskbarBadge sync degraded safely: %s", exc)
             self.degraded = True
             self._hide_window()
 
     def destroy(self) -> None:
-        """Stop timers, hide tooltip, destroy Win32 window, and trigger taskbar repaint."""
+        """Stop timers/hooks, hide tooltip, destroy Win32 window, and trigger taskbar repaint."""
         try:
+            self._dragging = False
+            self._drag_moved = False
+            self._drag_bounds = None
             self._sync_timer.stop()
+            self._immediate_sync_timer.stop()
+            self._followup_sync_timer.stop()
             self._hover_timer.stop()
+            self._uninstall_event_hooks()
             QToolTip.hideText()
             if sys.platform == "win32" and self._hwnd:
                 hwnd = self._hwnd

@@ -2488,5 +2488,262 @@ class V082GhostAndNearlinkTests(unittest.TestCase):
         self.assertNotIn('电压待获取', Path('ui_theme.py').read_text(encoding='utf-8'))
 
 
+class TaskbarBadgeDesktopAndZOrderTests(unittest.TestCase):
+    def test_desktop_shell_and_wallpaper_not_misclassified_as_fullscreen(self):
+        from taskbar_badge import should_hide_for_fullscreen
+        mon = (0, 0, 2560, 1440)
+        desktop_classes = (
+            '',
+            'WorkerW',
+            'Progman',
+            'SHELLDLL_DefView',
+            'SysListView32',
+            'Shell_TrayWnd',
+            'Shell_SecondaryTrayWnd',
+            'NotifyIconOverflowWindow',
+            'XamlExplorerHostIslandWindow',
+        )
+        for cls in desktop_classes:
+            for quns in (1, 2):
+                self.assertFalse(
+                    should_hide_for_fullscreen(mon, cls, mon, quns),
+                    f'{cls!r} with quns={quns} must not hide badge',
+                )
+        # Dynamic wallpaper / WorkerW child window spanning full monitor with QUNS_BUSY=2
+        self.assertFalse(
+            should_hide_for_fullscreen(
+                mon, 'CefBrowserWindow', mon, 2,
+                fg_ancestor_classes=('WorkerW',),
+            )
+        )
+        self.assertFalse(
+            should_hide_for_fullscreen(
+                mon, 'SDL_app', mon, 2,
+                fg_is_desktop_or_shell=True,
+            )
+        )
+        # Fullscreen window on secondary monitor (not taskbar monitor) with QUNS_BUSY=2
+        self.assertFalse(
+            should_hide_for_fullscreen(
+                (2560, 0, 5120, 1440), 'Chrome_WidgetWin_1', mon, 2,
+                fg_on_taskbar_monitor=False,
+            )
+        )
+        # Real fullscreen browser/game/presentation mode still hides badge
+        self.assertTrue(should_hide_for_fullscreen(mon, 'Chrome_WidgetWin_1', mon, 2))
+        self.assertTrue(should_hide_for_fullscreen((100, 100, 800, 600), 'SomeGame', mon, 3))
+        self.assertTrue(should_hide_for_fullscreen(None, '', mon, 4))
+
+    def test_zorder_helper_and_sync_reasserts_topmost_and_autohide_hides(self):
+        import taskbar_badge
+        from taskbar_badge import TaskbarBadge, is_badge_above_tray_in_zorder
+
+        # Chain (top -> bottom): 10 (badge) -> ... 80 windows ... -> 100 (tray) -> 200
+        prev_above = {100: 99, 10: 0}
+        for i in range(99, 10, -1):
+            prev_above[i] = i - 1
+        self.assertTrue(is_badge_above_tray_in_zorder(10, 100, lambda h: prev_above.get(h, 0)))
+
+        # Tray moved above badge (tray -> ... -> 0 without encountering 10)
+        prev_below = {100: 50, 50: 0, 10: 100}
+        self.assertFalse(is_badge_above_tray_in_zorder(10, 100, lambda h: prev_below.get(h, 0)))
+
+        b = TaskbarBadge(enabled=True)
+        self.addCleanup(b.destroy)
+        self.assertTrue(b.start())
+        geo = {
+            'tray_hwnd': 100,
+            'tray_rect': (0, 1380, 2560, 1440),
+            'notify_rect': (2200, 1380, 2560, 1440),
+            'rebar_rect': (1143, 1380, 1308, 1440),
+            'dpi': 120,
+            'mon_rect': (0, 0, 2560, 1440),
+            'fg_rect': (0, 0, 2560, 1440),
+            'fg_class': 'WorkerW',
+            'fg_is_desktop_or_shell': True,
+            'fg_ancestor_classes': (),
+            'fg_on_taskbar_monitor': True,
+            'quns_state': 2,
+        }
+        with patch.object(b, '_probe_taskbar_geometry', return_value=geo), \
+             patch.object(b, '_needs_topmost_reassert', return_value=False):
+            b.update_state(66, stale=False, tooltip_text='66%')
+            self.assertTrue(b._visible)
+
+        # Simulate Shell_TrayWnd rising above badge on next sync with unchanged rect/render_key
+        with patch.object(b, '_probe_taskbar_geometry', return_value=geo), \
+             patch.object(b, '_needs_topmost_reassert', return_value=True), \
+             patch.object(taskbar_badge._user32, 'SetWindowPos', return_value=1) as mock_swp:
+            b.sync()
+            self.assertTrue(b._visible)
+            mock_swp.assert_called_once()
+            args = mock_swp.call_args[0]
+            self.assertEqual(args[1], taskbar_badge._HWND_TOPMOST)
+            self.assertEqual(args[6], taskbar_badge._SWP_NOACTIVATE | taskbar_badge._SWP_SHOWWINDOW)
+
+        # Auto-hide taskbar slid off bottom edge must still hide badge
+        autohide_geo = dict(geo, tray_rect=(0, 1438, 2560, 1486))
+        with patch.object(b, '_probe_taskbar_geometry', return_value=autohide_geo):
+            b.sync()
+            self.assertFalse(b._visible)
+
+    def test_dashboard_hide_nudges_badge_without_hiding_or_destroying_it(self):
+        from dashboard import Dashboard
+        with patch('dashboard.read_samples', return_value=[]), \
+             patch('dashboard.TaskbarBadge.start', return_value=True):
+            w = Dashboard(start_worker=False)
+            self.addCleanup(lambda: (w.tray.hide(), w._cleanup_badge(), w.deleteLater()))
+            self.assertIsNotNone(w.badge)
+            with patch.object(w.badge, 'nudge_topmost') as mock_nudge, \
+                 patch.object(w.badge, 'destroy') as mock_destroy, \
+                 patch.object(w.badge, '_hide_window') as mock_hide:
+                w.show()
+                APP.processEvents()
+                w.hide()
+                APP.processEvents()
+                mock_nudge.assert_called()
+                mock_destroy.assert_not_called()
+                mock_hide.assert_not_called()
+
+
+class TaskbarBadgeCustomPositionTests(unittest.TestCase):
+    def test_auto_unchanged_and_custom_clamping_and_hit_pad(self):
+        from taskbar_badge import compute_badge_rect, render_badge_image
+
+        tray = (0, 1380, 2560, 1440)
+        notify = (2200, 1380, 2560, 1440)
+        rebar = (1143, 1380, 1308, 1440)
+
+        # 1) auto mode unchanged (immediately left of TrayNotifyWnd with 5*scale gap)
+        auto_rect = compute_badge_rect(tray, notify, rebar, 88, 44, dpi=120, position_mode='auto', custom_x=400)
+        self.assertEqual(auto_rect, (2200 - round(5 * 1.25) - 88, 1380 + (60 - 44) // 2, 88, 44))
+
+        # 2) custom mode places at tray_l + round(custom_x * scale), vertically centered, independent of rebar
+        custom_rect = compute_badge_rect(tray, notify, rebar, 88, 44, dpi=120, position_mode='custom', custom_x=400)
+        self.assertEqual(custom_rect, (0 + round(400 * 1.25), 1380 + (60 - 44) // 2, 88, 44))
+
+        # 3) out-of-bounds custom_x safely clamped inside [tray_l + margin, tray_r - badge_w - margin]
+        margin = max(2, round(4 * 1.25))  # 5
+        left_clamped = compute_badge_rect(tray, notify, rebar, 88, 44, dpi=120, position_mode='custom', custom_x=-500)
+        right_clamped = compute_badge_rect(tray, notify, rebar, 88, 44, dpi=120, position_mode='custom', custom_x=99999)
+        self.assertEqual(left_clamped[0], 0 + margin)
+        self.assertEqual(right_clamped[0], 2560 - 88 - margin)
+
+        # 4) unlocked dashed-guide render still preserves full-canvas alpha >= 1 hit pad
+        img = render_badge_image(72, stale=False, light_theme=True, hovered=False, drag_unlocked=True, dpi=120)
+        for pt in ((0, 0), (img.width() - 1, 0), (0, img.height() - 1), (img.width() - 1, img.height() - 1)):
+            self.assertGreaterEqual(img.pixelColor(*pt).alpha(), 1)
+
+    def test_custom_position_persistence_reload_and_reset(self):
+        from dashboard import Dashboard
+
+        s = QSettings('PersonalTools', 'ATKBatteryMonitorV02')
+        s.remove('badge_position_mode')
+        s.remove('badge_custom_x')
+        s.sync()
+        self.addCleanup(lambda: (s.remove('badge_position_mode'), s.remove('badge_custom_x'), s.sync()))
+
+        with patch('dashboard.read_samples', return_value=[]), \
+             patch('dashboard.TaskbarBadge.start', return_value=True):
+            w = Dashboard(start_worker=False)
+            self.addCleanup(lambda: (w.tray.hide(), w._cleanup_badge(), w.deleteLater()))
+            self.assertEqual(w.badge.position_mode, 'auto')
+            self.assertFalse(w.badge.drag_unlocked)
+            self.assertEqual(w.badge_pos_mode_pill.text(), '自动默认')
+
+            # Fine-tune offset via Settings spinbox
+            w.badge_pos_spin.setValue(420)
+            APP.processEvents()
+            self.assertEqual(w.badge.position_mode, 'custom')
+            self.assertEqual(w.badge.custom_x, 420)
+            self.assertEqual(w.badge_pos_mode_pill.text(), '自定义')
+            self.assertEqual(str(w.settings.value('badge_position_mode')), 'custom')
+            self.assertEqual(int(w.settings.value('badge_custom_x')), 420)
+
+        # Cold-start reload restores saved custom offset while remaining locked by default
+        with patch('dashboard.read_samples', return_value=[]), \
+             patch('dashboard.TaskbarBadge.start', return_value=True):
+            w2 = Dashboard(start_worker=False)
+            self.addCleanup(lambda: (w2.tray.hide(), w2._cleanup_badge(), w2.deleteLater()))
+            self.assertEqual(w2.badge.position_mode, 'custom')
+            self.assertEqual(w2.badge.custom_x, 420)
+            self.assertFalse(w2.badge.drag_unlocked)
+            self.assertEqual(w2.badge_pos_spin.value(), 420)
+            self.assertEqual(w2.badge_pos_mode_pill.text(), '自定义')
+
+            # Reset restores auto mode and clears custom setting
+            w2.reset_badge_position()
+            APP.processEvents()
+            self.assertEqual(w2.badge.position_mode, 'auto')
+            self.assertIsNone(w2.badge.custom_x)
+            self.assertEqual(w2.badge_pos_mode_pill.text(), '自动默认')
+            self.assertEqual(str(w2.settings.value('badge_position_mode')), 'auto')
+            self.assertIsNone(w2.settings.value('badge_custom_x'))
+
+    def test_locked_click_vs_unlocked_drag_and_sync_pause(self):
+        import taskbar_badge
+        from taskbar_badge import TaskbarBadge
+
+        clicks = []
+        pos_updates = []
+        b = TaskbarBadge(
+            enabled=True,
+            on_left_click=lambda: clicks.append(True),
+            on_position_changed=lambda m, x: pos_updates.append((m, x)),
+        )
+        self.addCleanup(b.destroy)
+        self.assertTrue(b.start())
+
+        geo = {
+            'tray_hwnd': 0,
+            'tray_rect': (0, 1380, 2560, 1440),
+            'notify_rect': (2200, 1380, 2560, 1440),
+            'rebar_rect': (1143, 1380, 1308, 1440),
+            'dpi': 96,
+            'mon_rect': (0, 0, 2560, 1440),
+            'fg_rect': (0, 0, 1000, 800),
+            'fg_class': 'Notepad',
+            'quns_state': 1,
+        }
+        with patch.object(b, '_probe_taskbar_geometry', return_value=geo):
+            b.update_state(80, stale=False, tooltip_text='80%')
+            start_rect = b._last_rect
+            self.assertIsNotNone(start_rect)
+
+            # 1) Locked: left click triggers on_left_click and does NOT enter drag mode
+            b._handle_win32_message(b._hwnd, taskbar_badge._WM_LBUTTONDOWN, 0, 0)
+            self.assertFalse(b._dragging)
+            b._handle_win32_message(b._hwnd, taskbar_badge._WM_LBUTTONUP, 0, 0)
+            APP.processEvents()
+            self.assertEqual(len(clicks), 1)
+            self.assertEqual(pos_updates, [])
+
+            # 2) Unlocked: drag horizontally, sync() skips while dragging, release commits custom position without opening window
+            b.set_drag_unlocked(True)
+            cursor_seq = iter([start_rect[0] + 10, start_rect[0] + 10 - 500])
+            with patch.object(b, '_get_cursor_screen_x', side_effect=lambda: next(cursor_seq)), \
+                 patch.object(taskbar_badge._user32, 'SetCapture', return_value=b._hwnd), \
+                 patch.object(taskbar_badge._user32, 'ReleaseCapture', return_value=1), \
+                 patch.object(taskbar_badge._user32, 'SetWindowPos', return_value=1) as mock_swp:
+                b._handle_win32_message(b._hwnd, taskbar_badge._WM_LBUTTONDOWN, 0, 0)
+                self.assertTrue(b._dragging)
+                b._handle_win32_message(b._hwnd, taskbar_badge._WM_MOUSEMOVE, 0, 0)
+                dragged_rect = b._last_rect
+                self.assertEqual(dragged_rect[0], start_rect[0] - 500)
+                mock_swp.assert_called()
+                self.assertTrue(bool(mock_swp.call_args[0][6] & taskbar_badge._SWP_NOACTIVATE))
+
+                # Periodic sync() while dragging must not overwrite live drag coordinates
+                b._last_rect = dragged_rect
+                b.sync()
+                self.assertEqual(b._last_rect, dragged_rect)
+
+                b._handle_win32_message(b._hwnd, taskbar_badge._WM_LBUTTONUP, 0, 0)
+                APP.processEvents()
+                self.assertFalse(b._dragging)
+                self.assertEqual(len(clicks), 1)
+                self.assertEqual(pos_updates, [('custom', start_rect[0] - 500)])
+
+
 if __name__=='__main__':
     unittest.main(verbosity=2)

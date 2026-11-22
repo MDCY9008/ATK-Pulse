@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 ATK-Pulse Contributors
-"""ATK-Pulse V0.8.2 — "Iris Greenhouse" (鸢尾温室) Windows dashboard."""
+"""ATK-Pulse V0.8.3 — "Iris Greenhouse" (鸢尾温室) Windows dashboard."""
 from __future__ import annotations
 
 import ctypes
@@ -14,7 +14,7 @@ import winreg
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, Qt, QTimer, QRectF, QPointF, QSize, QUrl
+from PySide6.QtCore import QEvent, QSettings, Qt, QTimer, QRectF, QPointF, QSize, QUrl
 from PySide6.QtGui import (
     QColor, QCursor, QFont, QIcon, QLinearGradient, QPainter, QPainterPath,
     QPen, QPixmap, QDesktopServices,
@@ -561,6 +561,7 @@ class Dashboard(QMainWindow):
         self._last_estimated_qid = None
         self._last_estimate = None
         self.badge = None
+        self._badge_pos_mode, self._badge_custom_x = self._load_badge_position_settings()
 
         self.setWindowTitle(f"{APP_NAME} · {VERSION_LABEL}")
         self.setWindowIcon(load_app_icon())
@@ -636,6 +637,12 @@ class Dashboard(QMainWindow):
         self.badge_action.setCheckable(True)
         self.badge_action.setChecked(badge_enabled)
         self.badge_action.toggled.connect(self.toggle_taskbar_badge)
+        self.badge_drag_action = menu.addAction("解锁拖动位置")
+        self.badge_drag_action.setEnabled(badge_enabled)
+        self.badge_drag_action.triggered.connect(self.toggle_badge_drag_lock)
+        self.badge_reset_pos_action = menu.addAction("恢复默认位置")
+        self.badge_reset_pos_action.setEnabled(badge_enabled)
+        self.badge_reset_pos_action.triggered.connect(self.reset_badge_position)
         folder_action = menu.addAction("打开记录文件夹")
         folder_action.triggered.connect(self.open_history_folder)
         menu.addSeparator()
@@ -652,7 +659,10 @@ class Dashboard(QMainWindow):
                 enabled=badge_enabled,
                 on_left_click=self.toggle_dashboard,
                 on_right_click=self._show_badge_menu,
+                on_position_changed=self._on_badge_position_changed,
                 low_threshold=self.threshold.value(),
+                position_mode=self._badge_pos_mode,
+                custom_x=self._badge_custom_x,
                 parent=self,
             )
             self.badge.start()
@@ -660,6 +670,7 @@ class Dashboard(QMainWindow):
         except Exception:
             log.warning("TaskbarBadge setup failed; continuing with tray icon only", exc_info=True)
             self.badge = None
+        self._sync_badge_position_ui()
 
         saved_custom_img = str(self.settings.value("card_custom_image", "") or "").strip()
         if saved_custom_img and Path(saved_custom_img).is_file():
@@ -1138,6 +1149,47 @@ class Dashboard(QMainWindow):
         row_badge.setContentsMargins(0, 0, 0, 0)
         cd_l.addWidget(row_badge_w)
 
+        row_badge_pos_mode = QHBoxLayout()
+        row_badge_pos_mode.setContentsMargins(0, 0, 0, 0)
+        row_badge_pos_mode.setSpacing(6)
+        row_badge_pos_mode.addWidget(text("任务栏贴片位置", wrap=False))
+        row_badge_pos_mode.addStretch()
+        self.badge_pos_mode_pill = PillBadge(
+            "自定义" if self._badge_pos_mode == "custom" else "自动默认",
+            kind="iris" if self._badge_pos_mode == "custom" else "muted",
+        )
+        row_badge_pos_mode.addWidget(self.badge_pos_mode_pill)
+        self.badge_drag_btn = tiny_button("解锁拖动")
+        self.badge_drag_btn.setEnabled(badge_on)
+        self.badge_drag_btn.clicked.connect(self.toggle_badge_drag_lock)
+        row_badge_pos_mode.addWidget(self.badge_drag_btn)
+        row_badge_pos_mode_w = QWidget()
+        row_badge_pos_mode_w.setMinimumHeight(26)
+        row_badge_pos_mode_w.setLayout(row_badge_pos_mode)
+        cd_l.addWidget(row_badge_pos_mode_w)
+
+        row_badge_pos_adj = QHBoxLayout()
+        row_badge_pos_adj.setContentsMargins(0, 0, 0, 0)
+        row_badge_pos_adj.setSpacing(6)
+        row_badge_pos_adj.addWidget(text("水平偏移微调", wrap=False))
+        row_badge_pos_adj.addStretch()
+        self.badge_pos_spin = CleanSpinBox()
+        self.badge_pos_spin.setRange(0, 3840)
+        self.badge_pos_spin.setSingleStep(10)
+        self.badge_pos_spin.setSuffix(" px")
+        self.badge_pos_spin.setValue(int(self._badge_custom_x or 0))
+        self.badge_pos_spin.setEnabled(badge_on)
+        self.badge_pos_spin.valueChanged.connect(self._on_badge_pos_spin_changed)
+        row_badge_pos_adj.addWidget(self.badge_pos_spin)
+        self.badge_reset_pos_btn = tiny_button("恢复默认")
+        self.badge_reset_pos_btn.setEnabled(badge_on)
+        self.badge_reset_pos_btn.clicked.connect(self.reset_badge_position)
+        row_badge_pos_adj.addWidget(self.badge_reset_pos_btn)
+        row_badge_pos_adj_w = QWidget()
+        row_badge_pos_adj_w.setMinimumHeight(26)
+        row_badge_pos_adj_w.setLayout(row_badge_pos_adj)
+        cd_l.addWidget(row_badge_pos_adj_w)
+
         row_alert = QHBoxLayout()
         row_alert.setContentsMargins(0, 0, 0, 0)
         row_alert.addWidget(text("启用低电量系统托盘通知", wrap=False))
@@ -1176,7 +1228,7 @@ class Dashboard(QMainWindow):
         row_theme_w.setLayout(row_theme)
         cd_l.addWidget(row_theme_w)
 
-        cd_l.addWidget(text("任务栏直显自适应深浅任务栏与全屏隐藏；异常自动回退系统托盘。", role="muted", wrap=True))
+        cd_l.addWidget(text("右键贴片可解锁水平拖动或恢复默认，位置越界自动钳制在任务栏内；自适应深浅任务栏与全屏隐藏。", role="muted", wrap=True))
         cd_l.addStretch()
         card_display.setLayout(cd_l)
         grid.addWidget(card_display, 0, 0)
@@ -2417,6 +2469,87 @@ class Dashboard(QMainWindow):
             self.taskbar_pill.blockSignals(False)
         if getattr(self, "badge", None) is not None:
             self.badge.set_enabled(enabled)
+        self._sync_badge_position_ui()
+
+    def _load_badge_position_settings(self) -> tuple[str, int | None]:
+        mode = str(self.settings.value("badge_position_mode", "auto") or "auto").strip().lower()
+        raw_x = self.settings.value("badge_custom_x", None)
+        if mode == "custom" and raw_x is not None and str(raw_x).strip() != "":
+            try:
+                return ("custom", max(0, int(raw_x)))
+            except (TypeError, ValueError):
+                pass
+        return ("auto", None)
+
+    def _sync_badge_position_ui(self):
+        enabled = bool(self.badge_action.isChecked()) if hasattr(self, "badge_action") else True
+        badge = getattr(self, "badge", None)
+        unlocked = bool(badge.drag_unlocked) if badge is not None else False
+        is_custom = self._badge_pos_mode == "custom" and self._badge_custom_x is not None
+
+        if hasattr(self, "badge_pos_mode_pill"):
+            self.badge_pos_mode_pill.setText("自定义" if is_custom else "自动默认")
+            self.badge_pos_mode_pill.apply_kind("iris" if is_custom else "muted")
+        if hasattr(self, "badge_drag_action"):
+            self.badge_drag_action.setText("锁定位置" if unlocked else "解锁拖动位置")
+            self.badge_drag_action.setEnabled(enabled)
+        if hasattr(self, "badge_reset_pos_action"):
+            self.badge_reset_pos_action.setEnabled(enabled)
+        if hasattr(self, "badge_drag_btn"):
+            self.badge_drag_btn.setText("锁定位置" if unlocked else "解锁拖动")
+            self.badge_drag_btn.setEnabled(enabled)
+        if hasattr(self, "badge_reset_pos_btn"):
+            self.badge_reset_pos_btn.setEnabled(enabled)
+        if hasattr(self, "badge_pos_spin"):
+            spin_val = (
+                int(self._badge_custom_x)
+                if is_custom
+                else (int(badge.current_logical_x) if (badge is not None and badge.current_logical_x is not None) else 0)
+            )
+            self.badge_pos_spin.blockSignals(True)
+            self.badge_pos_spin.setValue(max(0, min(3840, spin_val)))
+            self.badge_pos_spin.blockSignals(False)
+            self.badge_pos_spin.setEnabled(enabled)
+
+    def toggle_badge_drag_lock(self):
+        badge = getattr(self, "badge", None)
+        if badge is None:
+            return
+        badge.set_drag_unlocked(not badge.drag_unlocked)
+        self._sync_badge_position_ui()
+
+    def _on_badge_position_changed(self, mode: str, custom_x: int | None):
+        if mode == "custom" and custom_x is not None:
+            self._badge_pos_mode = "custom"
+            self._badge_custom_x = max(0, int(custom_x))
+            self.settings.setValue("badge_position_mode", "custom")
+            self.settings.setValue("badge_custom_x", int(self._badge_custom_x))
+        else:
+            self._badge_pos_mode = "auto"
+            self._badge_custom_x = None
+            self.settings.setValue("badge_position_mode", "auto")
+            self.settings.remove("badge_custom_x")
+        self._sync_badge_position_ui()
+
+    def _on_badge_pos_spin_changed(self, value: int):
+        val = max(0, int(value))
+        self._badge_pos_mode = "custom"
+        self._badge_custom_x = val
+        self.settings.setValue("badge_position_mode", "custom")
+        self.settings.setValue("badge_custom_x", val)
+        if getattr(self, "badge", None) is not None:
+            self.badge.set_position("custom", val)
+        self._sync_badge_position_ui()
+
+    def reset_badge_position(self):
+        self._badge_pos_mode = "auto"
+        self._badge_custom_x = None
+        self.settings.setValue("badge_position_mode", "auto")
+        self.settings.remove("badge_custom_x")
+        if getattr(self, "badge", None) is not None:
+            self.badge.set_drag_unlocked(False)
+            self.badge.set_position("auto", None)
+        self._sync_badge_position_ui()
 
     def _show_badge_menu(self):
         self.tray_menu.exec(QCursor.pos())
@@ -2509,6 +2642,18 @@ class Dashboard(QMainWindow):
             if hasattr(self, "tick") and self.tick.interval() != 5000:
                 self.tick.setInterval(5000)
             QTimer.singleShot(150, self._trim_if_hidden)
+            if getattr(self, "badge", None) is not None:
+                self.badge.nudge_topmost()
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if (
+            event.type() == QEvent.Type.WindowStateChange
+            and not self._closing
+            and self.isMinimized()
+            and getattr(self, "badge", None) is not None
+        ):
+            self.badge.nudge_topmost()
 
     def showEvent(self, event):
         super().showEvent(event)

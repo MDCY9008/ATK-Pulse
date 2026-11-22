@@ -1,6 +1,6 @@
 # ATK-Pulse
 
-**ATK / VXE / VGN 离线鼠标电量与电压监测工具（V0.8.2 · 鸢尾温室 UI）**  
+**ATK / VXE / VGN 离线鼠标电量与电压监测工具（V0.8.3 · 鸢尾温室 UI）**  
 **作者**：[Liebe Kiana (@liaman-li)](https://github.com/liaman-li/ATK-Pulse)
 
 > **永久免费开源，谨防倒卖。**  
@@ -32,7 +32,7 @@
    - 总览右侧提供 `24h / 7天 / 本周期` 与 `电量 / 电压` 快捷切换，并对超过 7.5 分钟的采集空档自动标注雾灰半透「休眠」间隙带。
    - 历史趋势页支持 `最近 1 小时 / 24 小时 / 7 天 / 30 天 / 全部记录`、虚线「固件对照」、自适应「Y 轴自动缩放」，以及安全不落盘覆盖原始 CSV 的导出功能。
 3. **Win11 任务栏无侵入直显 + 托盘驻留**
-   - 在系统通知区折叠箭头左侧直接显示电压估算百分比，支持深浅任务栏自适应、全屏隐藏、顶栏/托盘/偏好设置三端联动开关与异常安全降级。
+   - 在系统通知区折叠箭头左侧直接显示电压估算百分比，支持深浅任务栏自适应、全屏隐藏、顶栏/托盘/偏好设置三端联动开关与异常安全降级；支持贴片右键「解锁拖动位置 / 锁定位置 / 恢复默认位置」沿任务栏自由水平拖动（自动垂直居中与边界防出界钳制），以及在「偏好设置」中进行水平偏移微调。
 4. **1% 精细电压估算与全系生态只读架构**
    - **已标定机型 1% 估算**：基于 Cycle 1 实测标定的 15 点分段 LUT + 压降门控滤波 + 无线单调防抖（`ATK F1 V2 Ultimate`）；**未实机标定机型保守显示固件原报并在后台静默记录原始电压**（仅记录含真实电压字段的 `CompX` 协议，`BITMOUSE (nordic54)` 与 `EVISION Nearlink` 64B 协议无电压字段，电压保持 `None`）。
    - **全系生态扩容与安全守卫**：设备白名单已扩展至 **292 条**（覆盖 **ATK / VXE / MAD / VGN** 生态 **160+ 款**鼠标，包含 `CompX` 17B、`BITMOUSE (nordic54)` 64B 与 **EVISION Nearlink 星闪** 64B 协议族，已适配 ATK X1 星闪版无线 `373B:108C` / 有线 `373B:108B`），强制执行 Win32 `HidP_GetCaps` 17B/64B 报告长度只读守卫；`CompX` 通用接收器支持只读 `0x10`、`BITMOUSE` 无线接收器支持只读 `0x4A`（`CID,MID`）自动识别具体型号（如 `ATK Ghost Ultimate` / `ATK Z1 Ultimate 2.0` / `X1` / `A9` / `U2` / `VXE R1` / `MAD` 等）。
@@ -54,7 +54,7 @@
 ## 快速运行（Windows 10 / 11）
 
 ### 方式 A · 普通玩家推荐（Releases 绿色免安装版）
-1. 前往本仓库 [GitHub Releases](https://github.com/liaman-li/ATK-Pulse/releases) 下载 `ATK-Pulse-V0.8.2-win64.zip`。
+1. 前往本仓库 [GitHub Releases](https://github.com/liaman-li/ATK-Pulse/releases) 下载 `ATK-Pulse-V0.8.3-win64.zip`。
 2. 解压至任意本地目录（勿放在受系统权限保护的目录），双击 `ATK-Pulse\ATK-Pulse.exe` 即可直接运行（无需配置 Python 环境，无黑框命令行弹窗）。
    > **提示**：本工具为个人免费开源构建、未购买商业数字签名证书，首次运行若弹出 Windows SmartScreen 蓝色拦截框，点击「**更多信息 → 仍要运行**」即可。
 
