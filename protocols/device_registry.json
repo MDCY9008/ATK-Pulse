@@ -1,0 +1,312 @@
+{
+  "schema_version": 1,
+  "ecosystem_scope": ["ATK", "VXE", "VGN"],
+  "protocol_families": {
+    "nordic52": {
+      "protocol_status": "ready",
+      "hid_match": {
+        "usage_page": "0xFF02",
+        "usage": "0x0002",
+        "interface_number": 1
+      }
+    },
+    "nordic54": {
+      "protocol_status": "ready",
+      "hid_match": {
+        "usage_page": "0xFF05",
+        "usage": "0x0001",
+        "interface_number": null
+      }
+    },
+    "nano_ff05": {
+      "protocol_status": "pending_capture",
+      "hid_match": {
+        "usage_page": "0xFF05",
+        "usage": "0x0001",
+        "interface_number": null
+      }
+    }
+  },
+  "receivers": {
+    "373B:11D9": {
+      "vid": "0x373B",
+      "pid": "0x11D9",
+      "link_role": "wireless_dongle",
+      "protocol_family": "nordic52",
+      "hid_match_override": {
+        "usage_page": "0xFF02",
+        "usage": "0x0002",
+        "interface_number": 1
+      },
+      "candidate_model_ids": [
+        "atk_f1_v2_ultimate",
+        "atk_a9_ultimate"
+      ],
+      "shared_pid_collision": true
+    },
+    "373B:11B6": {
+      "vid": "0x373B",
+      "pid": "0x11B6",
+      "link_role": "wired_usb",
+      "protocol_family": "nordic52",
+      "candidate_model_ids": ["atk_a9_ultimate"],
+      "shared_pid_collision": false
+    },
+    "373B:1031": {
+      "vid": "0x373B",
+      "pid": "0x1031",
+      "link_role": "wireless_dongle",
+      "protocol_family": "nordic52",
+      "candidate_model_ids": ["atk_f1_ultimate"],
+      "shared_pid_collision": false
+    },
+    "373B:102E": {
+      "vid": "0x373B",
+      "pid": "0x102E",
+      "link_role": "wired_usb",
+      "protocol_family": "nordic52",
+      "candidate_model_ids": ["atk_f1_ultimate"],
+      "shared_pid_collision": false
+    },
+    "373B:104D": {
+      "vid": "0x373B",
+      "pid": "0x104D",
+      "link_role": "wireless_dongle",
+      "protocol_family": "nordic52",
+      "candidate_model_ids": ["vxe_mad_r"],
+      "shared_pid_collision": false
+    },
+    "373B:103F": {
+      "vid": "0x373B",
+      "pid": "0x103F",
+      "link_role": "wired_usb",
+      "protocol_family": "nordic52",
+      "candidate_model_ids": ["vxe_mad_r"],
+      "shared_pid_collision": false
+    },
+    "373B:1040": {
+      "vid": "0x373B",
+      "pid": "0x1040",
+      "link_role": "wireless_dongle",
+      "protocol_family": "nordic52",
+      "candidate_model_ids": ["vxe_mad_r_major_plus"],
+      "shared_pid_collision": false
+    },
+    "373B:104C": {
+      "vid": "0x373B",
+      "pid": "0x104C",
+      "link_role": "wired_usb",
+      "protocol_family": "nordic52",
+      "candidate_model_ids": ["vxe_mad_r_major_plus"],
+      "shared_pid_collision": false
+    },
+    "3554:F58A": {
+      "vid": "0x3554",
+      "pid": "0xF58A",
+      "link_role": "wireless_dongle",
+      "protocol_family": "nordic52",
+      "candidate_model_ids": ["vxe_r1_pro_max"],
+      "shared_pid_collision": false
+    },
+    "3554:F58C": {
+      "vid": "0x3554",
+      "pid": "0xF58C",
+      "link_role": "wired_usb",
+      "protocol_family": "nordic52",
+      "candidate_model_ids": ["vxe_r1_pro_max"],
+      "shared_pid_collision": false
+    },
+    "3554:F58E": {
+      "vid": "0x3554",
+      "pid": "0xF58E",
+      "link_role": "wireless_dongle",
+      "protocol_family": "nordic52",
+      "candidate_model_ids": ["vxe_r1_se_plus"],
+      "shared_pid_collision": false
+    },
+    "3554:F58F": {
+      "vid": "0x3554",
+      "pid": "0xF58F",
+      "link_role": "wired_usb",
+      "protocol_family": "nordic52",
+      "candidate_model_ids": ["vxe_r1_se_plus"],
+      "shared_pid_collision": false
+    },
+    "3554:F503": {
+      "vid": "0x3554",
+      "pid": "0xF503",
+      "link_role": "wireless_dongle",
+      "protocol_family": "nordic52",
+      "candidate_model_ids": ["vgn_f1_pro"],
+      "shared_pid_collision": false
+    },
+    "3554:F502": {
+      "vid": "0x3554",
+      "pid": "0xF502",
+      "link_role": "wired_usb",
+      "protocol_family": "nordic52",
+      "candidate_model_ids": ["vgn_f1_pro"],
+      "shared_pid_collision": false
+    },
+    "3554:FB3E": {
+      "vid": "0x3554",
+      "pid": "0xFB3E",
+      "link_role": "wireless_dongle",
+      "protocol_family": "nordic52",
+      "candidate_model_ids": ["vgn_f2_pro_max"],
+      "shared_pid_collision": false
+    },
+    "3554:FB3D": {
+      "vid": "0x3554",
+      "pid": "0xFB3D",
+      "link_role": "wired_usb",
+      "protocol_family": "nordic52",
+      "candidate_model_ids": ["vgn_f2_pro_max"],
+      "shared_pid_collision": false
+    },
+    "373B:1155": {
+      "vid": "0x373B",
+      "pid": "0x1155",
+      "link_role": "wireless_dongle",
+      "protocol_family": "nordic54",
+      "candidate_model_ids": ["atk_zero"],
+      "shared_pid_collision": false
+    },
+    "373B:124F": {
+      "vid": "0x373B",
+      "pid": "0x124F",
+      "link_role": "wireless_dongle",
+      "protocol_family": "nordic54",
+      "candidate_model_ids": ["atk_zero"],
+      "shared_pid_collision": false
+    },
+    "373B:1154": {
+      "vid": "0x373B",
+      "pid": "0x1154",
+      "link_role": "wired_usb",
+      "protocol_family": "nordic54",
+      "candidate_model_ids": ["atk_zero"],
+      "shared_pid_collision": false
+    },
+    "373B:1216": {
+      "vid": "0x373B",
+      "pid": "0x1216",
+      "link_role": "wireless_dongle",
+      "protocol_family": "nano_ff05",
+      "candidate_model_ids": ["atk_nano_ff05_unverified"],
+      "shared_pid_collision": false
+    }
+  },
+  "models": {
+    "atk_f1_v2_ultimate": {
+      "brand": "ATK",
+      "display_name": "ATK F1 V2 Ultimate (8K)",
+      "verification_tier": "verified_hw",
+      "calibration_status": "calibrated",
+      "lut_profile_id": "atk_f1_v2_ultimate_cycle1_v1",
+      "protocol_family": "nordic52",
+      "voltage_capability": "wireless_candidate_mv",
+      "firmware_percent_step": 5
+    },
+    "atk_a9_ultimate": {
+      "brand": "ATK",
+      "display_name": "ATK A9 Ultimate",
+      "verification_tier": "catalog_only",
+      "calibration_status": "uncalibrated",
+      "lut_profile_id": null,
+      "protocol_family": "nordic52",
+      "voltage_capability": "wireless_candidate_mv_unverified",
+      "firmware_percent_step": 5
+    },
+    "atk_f1_ultimate": {
+      "brand": "ATK",
+      "display_name": "ATK F1 Ultimate",
+      "verification_tier": "catalog_only",
+      "calibration_status": "uncalibrated",
+      "lut_profile_id": null,
+      "protocol_family": "nordic52",
+      "voltage_capability": "wireless_candidate_mv_unverified",
+      "firmware_percent_step": 5
+    },
+    "vxe_mad_r": {
+      "brand": "VXE",
+      "display_name": "VXE MAD R",
+      "verification_tier": "catalog_only",
+      "calibration_status": "uncalibrated",
+      "lut_profile_id": null,
+      "protocol_family": "nordic52",
+      "voltage_capability": "wireless_candidate_mv_unverified",
+      "firmware_percent_step": 5
+    },
+    "vxe_mad_r_major_plus": {
+      "brand": "VXE",
+      "display_name": "VXE MAD R Major Plus",
+      "verification_tier": "catalog_only",
+      "calibration_status": "uncalibrated",
+      "lut_profile_id": null,
+      "protocol_family": "nordic52",
+      "voltage_capability": "wireless_candidate_mv_unverified",
+      "firmware_percent_step": 5
+    },
+    "vxe_r1_pro_max": {
+      "brand": "VXE",
+      "display_name": "VXE R1 Pro Max",
+      "verification_tier": "catalog_only",
+      "calibration_status": "uncalibrated",
+      "lut_profile_id": null,
+      "protocol_family": "nordic52",
+      "voltage_capability": "wireless_candidate_mv_unverified",
+      "firmware_percent_step": 5
+    },
+    "vxe_r1_se_plus": {
+      "brand": "VXE",
+      "display_name": "VXE R1 SE+",
+      "verification_tier": "catalog_only",
+      "calibration_status": "uncalibrated",
+      "lut_profile_id": null,
+      "protocol_family": "nordic52",
+      "voltage_capability": "wireless_candidate_mv_unverified",
+      "firmware_percent_step": 5
+    },
+    "vgn_f1_pro": {
+      "brand": "VGN",
+      "display_name": "VGN F1 Pro",
+      "verification_tier": "catalog_only",
+      "calibration_status": "uncalibrated",
+      "lut_profile_id": null,
+      "protocol_family": "nordic52",
+      "voltage_capability": "wireless_candidate_mv_unverified",
+      "firmware_percent_step": 5
+    },
+    "vgn_f2_pro_max": {
+      "brand": "VGN",
+      "display_name": "VGN F2 Pro Max",
+      "verification_tier": "catalog_only",
+      "calibration_status": "uncalibrated",
+      "lut_profile_id": null,
+      "protocol_family": "nordic52",
+      "voltage_capability": "wireless_candidate_mv_unverified",
+      "firmware_percent_step": 5
+    },
+    "atk_zero": {
+      "brand": "ATK",
+      "display_name": "ATK Zero",
+      "verification_tier": "catalog_only",
+      "calibration_status": "no_voltage",
+      "lut_profile_id": null,
+      "protocol_family": "nordic54",
+      "voltage_capability": "wired_only",
+      "firmware_percent_step": null
+    },
+    "atk_nano_ff05_unverified": {
+      "brand": "ATK",
+      "display_name": "ATK / VXE NANO (0xFF05 待核实)",
+      "verification_tier": "catalog_only",
+      "calibration_status": "uncalibrated",
+      "lut_profile_id": null,
+      "protocol_family": "nano_ff05",
+      "voltage_capability": "unknown",
+      "firmware_percent_step": null
+    }
+  }
+}

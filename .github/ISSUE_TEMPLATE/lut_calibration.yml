@@ -1,0 +1,39 @@
+name: 电池电压-电量标定样本提交 (LUT Calibration)
+description: 提交完整放电周期的脱敏 CSV，为特定机型补充 1% 步进电压标定曲线
+title: "[LUT] <品牌与型号> 完整放电周期标定数据"
+labels: ["lut-calibration", "crowdsourcing"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请在「历史趋势」页点击「导出本周期 CSV」生成脱敏样本文件后附加于下方。
+        注意：请确认充电状态保持为 unknown，无需自行人工修正或插值任何百分比。
+  - type: input
+    id: model_name
+    attributes:
+      label: 设备型号与 model_id
+      placeholder: 例如：ATK X1 Ultimate (atk_x1_ultimate)
+    validations:
+      required: true
+  - type: input
+    id: vid_pid
+    attributes:
+      label: 测试所用 VID:PID 与固件版本
+      placeholder: 例如：373B:11D9 · 固件 v1.xx
+    validations:
+      required: true
+  - type: dropdown
+    id: battery_spec
+    attributes:
+      label: 电池标称规格（若已知）
+      options:
+        - 未知 / 未拆机
+        - 3.7V 标准锂电 (4.20V 满电)
+        - 3.85V 高压锂电 LiHV (4.35V 满电)
+  - type: textarea
+    id: cycle_desc
+    attributes:
+      label: 周期描述与附带文件
+      description: 简述从充满到低电告警的总时长、回报率设置（1K/4K/8K），并拖入导出后的脱敏 CSV（确保文件内无个人路径）。
+    validations:
+      required: true

@@ -1,0 +1,31 @@
+# Python & bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+*.spec
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# Local test artifacts, logs, research & backups
+analysis_reports/
+backup_v*/
+catalog_research/
+AGENTS.md
+v02_smoke.png
+v02_settings_smoke.png
+*.log
+*.tmp
+
+# Editor & OS metadata
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+.DS_Store

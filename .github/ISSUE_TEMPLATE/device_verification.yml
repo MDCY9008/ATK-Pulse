@@ -1,0 +1,61 @@
+name: 设备支持与协议核实反馈 (Device Verification)
+description: 提交 ATK / VXE / VGN 设备的 VID:PID 识别结果或脱敏诊断包，协助补充实机验证等级
+title: "[Device] <品牌与型号> (<VID:PID>)"
+labels: ["device-verification", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢协助完善 ATK-Pulse 设备库！请勿上传包含本机路径或原始序列号的数据——优先使用偏好设置中的「导出脱敏诊断包 (ZIP)」。
+  - type: dropdown
+    id: brand
+    attributes:
+      label: 品牌
+      options:
+        - ATK
+        - VXE
+        - VGN
+    validations:
+      required: true
+  - type: input
+    id: model_name
+    attributes:
+      label: 鼠标具体型号
+      placeholder: 例如：ATK F1 V2 Ultimate / VXE R1 Pro Max
+    validations:
+      required: true
+  - type: input
+    id: vid_pid
+    attributes:
+      label: 硬件 VID:PID
+      placeholder: 例如：373B:11D9 (无线) / 373B:XXXX (有线)
+    validations:
+      required: true
+  - type: dropdown
+    id: link_mode
+    attributes:
+      label: 测试连接方式
+      options:
+        - 2.4GHz 无线接收器
+        - 有线 USB 直连
+        - 同时测试了无线与有线
+    validations:
+      required: true
+  - type: dropdown
+    id: tier_observed
+    attributes:
+      label: 软件当前行为
+      options:
+        - 已显示电压与 1% 估算 (verified)
+        - 已读出固件原报或原始电压，但未标定 LUT (protocol_known_uncalibrated)
+        - 仅目录占位，待抓包 (catalog_only / protocol_pending_capture)
+        - 共用 PID 撞车列表缺少对应型号
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: 脱敏诊断包说明与实测现象
+      description: 可拖拽上传 ATK_Pulse_Diagnostic_Redacted.zip（已自动剔除用户名、路径与原始序列号），并简述 5 分钟轮询与休眠唤醒表现。
+    validations:
+      required: false
