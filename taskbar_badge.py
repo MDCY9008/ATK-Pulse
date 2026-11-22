@@ -537,7 +537,7 @@ class TaskbarBadge:
         self.percent: int | None = None
         self.stale: bool = True
         self.low_threshold: int = int(low_threshold)
-        self.tooltip_text: str = "ATK Battery Monitor · 等待首次读取"
+        self.tooltip_text: str = "ATK-Pulse · 等待设备连接"
         self.degraded: bool = False
 
         self._hwnd: int | None = None

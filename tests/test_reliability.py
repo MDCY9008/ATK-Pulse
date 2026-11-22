@@ -862,7 +862,8 @@ class IrisGreenhouseUiTests(unittest.TestCase):
             self.assertTrue(w.badge_low_extrap.isHidden())
             self.assertEqual(w.ring_widget.sub_text,'低段外推')
             self.assertEqual(w.slot_state_pill.text(),'低电')
-            self.assertIn('V0.8.0',w.status_right.text())
+            from build_info import VERSION_LABEL
+            self.assertIn(VERSION_LABEL,w.status_right.text())
             self.assertIn('永久免费开源',w.status_right.text())
 
     def test_trend_chart_area_fill_and_isolated_points(self):
@@ -1034,25 +1035,32 @@ class CleanRoomAndMultiDeviceV07Tests(unittest.TestCase):
         self.assertIsNone(r52.charging)
         self.assertEqual(r52.charging_state,'unknown')
 
-        # 2) nordic54 wireless (no voltage) vs wired (little-endian mV) + asleep
+        # 2) nordic54 (BITMOUSE 0xFF05:0x0001 64B): dynamic checksum (0x7D wireless / 0x7C wired), no voltage on either link
         c54=Nordic54Codec()
         req_wl=c54.build_request(wired=False)
-        self.assertEqual((len(req_wl), req_wl[0], req_wl[2], req_wl[5], req_wl[6]), (64, 0x08, 0x72, 0x01, 0x07))
+        self.assertEqual((len(req_wl), req_wl[0], req_wl[1], req_wl[2], req_wl[5], req_wl[6]), (64, 0x08, 0x7D, 0x72, 0x01, 0x07))
+        req_wd=c54.build_request(wired=True)
+        self.assertEqual((len(req_wd), req_wd[0], req_wd[1], req_wd[2], req_wd[5], req_wd[6]), (64, 0x08, 0x7C, 0x72, 0x00, 0x07))
+
         resp_wl=[0]*64
-        resp_wl[0]=0x08;resp_wl[1]=0x72;resp_wl[2]=0x00;resp_wl[5]=0x07;resp_wl[7]=77
-        resp_wl[8]=0xAA;resp_wl[9]=0xBB  # wireless junk must be ignored
+        resp_wl[0]=0x08;resp_wl[1]=0x72;resp_wl[2]=0x00;resp_wl[5]=0x07;resp_wl[6]=1;resp_wl[7]=77
+        resp_wl[8]=0xAA;resp_wl[9]=0xBB  # buffer leftover must be ignored
         parsed_wl=c54.parse_response(resp_wl, wired=False)
         self.assertTrue(parsed_wl.present and parsed_wl.percent_valid)
         self.assertEqual(parsed_wl.percent,77)
         self.assertIsNone(parsed_wl.voltage_mv)
+        self.assertIsNone(parsed_wl.voltage_raw)
         self.assertEqual(parsed_wl.voltage_validation,'not_supported_on_link')
         self.assertEqual(parsed_wl.charging_state,'unknown')
 
         resp_wd=[0]*64
-        resp_wd[0]=0x08;resp_wd[1]=0x72;resp_wd[2]=0x00;resp_wd[5]=0x07;resp_wd[7]=92
-        resp_wd[8]=4250 & 0xFF;resp_wd[9]=(4250 >> 8) & 0xFF
+        resp_wd[0]=0x08;resp_wd[1]=0x72;resp_wd[2]=0x00;resp_wd[5]=0x07;resp_wd[6]=1;resp_wd[7]=92
+        resp_wd[8]=4250 & 0xFF;resp_wd[9]=(4250 >> 8) & 0xFF  # wired buffer leftover must ALSO be ignored
         parsed_wd=c54.parse_response(resp_wd, wired=True)
-        self.assertEqual(parsed_wd.voltage_mv,4250)
+        self.assertEqual(parsed_wd.percent,92)
+        self.assertIsNone(parsed_wd.voltage_mv)
+        self.assertIsNone(parsed_wd.voltage_raw)
+        self.assertEqual(parsed_wd.voltage_validation,'not_supported_on_link')
         self.assertIsNone(parsed_wd.charging)
         self.assertEqual(parsed_wd.charging_state,'unknown')
 
@@ -1062,7 +1070,7 @@ class CleanRoomAndMultiDeviceV07Tests(unittest.TestCase):
         self.assertTrue(parsed_sleep.asleep)
         self.assertEqual(parsed_sleep.failure_reason,'device_asleep')
 
-        # 3) nano_ff05 must never build a 64B write request
+        # 3) nano_ff05 reserved codec must never build a 64B write request
         c_nano=NanoFf05Codec()
         self.assertEqual(c_nano.protocol_status,'pending_capture')
         self.assertIsNone(c_nano.build_request())
@@ -1089,17 +1097,18 @@ class CleanRoomAndMultiDeviceV07Tests(unittest.TestCase):
         self.assertEqual(res['outcome'],'receiver_absent')
         self.assertEqual(writes,[])
 
-        # Also whitelisted pending_capture 373B:1216 (nano_ff05) must never write 64B probe
-        nano_dev=dict(vendor_id=0x373B, product_id=0x1216, interface_number=1,
-                      usage_page=0xFF05, usage=0x0001, path=b'nano-ff05', serial_number='N1')
-        res_nano=TargetQuery(
-            lambda:[nano_dev],
+        # 373B:1216 is now BITMOUSE (nordic54 64B), and must reject mismatched output_report_length != 64 with 0 writes
+        nano_bad_len=dict(vendor_id=0x373B, product_id=0x1216, interface_number=1,
+                          usage_page=0xFF05, usage=0x0001, output_report_length=17,
+                          path=b'nano-ff05-bad', serial_number='N1')
+        res_nano_bad=TargetQuery(
+            lambda:[nano_bad_len],
             lambda:SpyDev(),
             lambda *a:nullcontext(),
             binding_store=BindingStore(Path(tmp.name)/'b.json'),
             legacy_history_probe=lambda:False,
-        )('q-nano','auto',threading.Event())
-        self.assertEqual(res_nano['outcome'],'protocol_pending_capture')
+        )('q-nano-bad','auto',threading.Event())
+        self.assertEqual(res_nano_bad['outcome'],'interface_not_found')
         self.assertEqual(writes,[])
 
     def test_v04_equivalence_and_uncalibrated_degradation(self):
@@ -1335,7 +1344,16 @@ class V08UiAndReleaseTests(unittest.TestCase):
             )
             with zipfile.ZipFile(zip_out, 'r') as zf:
                 names = set(zf.namelist())
-                self.assertEqual(names, {'manifest.json', 'device_profile_snapshot.json', 'samples_redacted.csv', 'diagnostic_notes.txt'})
+                self.assertEqual(
+                    names,
+                    {
+                        'manifest.json',
+                        'device_profile_snapshot.json',
+                        'hid_descriptors_sanitized.json',
+                        'samples_redacted.csv',
+                        'diagnostic_notes.txt',
+                    },
+                )
                 for name in names:
                     txt = zf.read(name).decode('utf-8')
                     self.assertNotIn(raw_secret, txt)
@@ -1599,6 +1617,480 @@ class V08UiAndReleaseTests(unittest.TestCase):
             self.assertFalse(w._hidden_to_tray)
             self.assertFalse(w._history_dirty)
             self.assertEqual(w.tick.interval(), 1000)
+
+
+class V081EcosystemTests(unittest.TestCase):
+    def test_v081_hid_caps_length_guard_10c9_and_12af_cross_protocol(self):
+        reg = DeviceRegistry.load()
+        compx_cnt = sum(1 for r in reg.receiver_list() if r.protocol_family == 'nordic52')
+        bitmouse_cnt = sum(1 for r in reg.receiver_list() if r.protocol_family == 'nordic54')
+        self.assertGreaterEqual(compx_cnt, 194)
+        self.assertEqual(bitmouse_cnt, 96)
+        self.assertGreaterEqual(len(reg.compx_cid_mid_catalog), 160)
+        for z_mid in ('atk_z1_pro', 'atk_z1_pro_max', 'atk_z1_ultra', 'atk_z1_ultimate_2', 'atk_z1_ultimate_2_plus'):
+            m = reg.get_model(z_mid)
+            self.assertIsNotNone(m)
+            self.assertIsNone(m.lut_profile_id)
+        for bad_vp in ((0x373B, 0x1262), (0x373B, 0x1203), (0x3554, 0xFA09), (0x3554, 0xF400), (0x373B, 0x2151)):
+            self.assertTrue(reg.is_excluded(*bad_vp))
+            self.assertEqual(reg.get_receivers(*bad_vp), [])
+
+        tmp = tempfile.TemporaryDirectory(dir=TEST_ROOT)
+        self.addCleanup(tmp.cleanup)
+        bstore = BindingStore(Path(tmp.name) / 'b.json')
+
+        # 1) 373B:10C9 exposes two 0xFF02:0x0002 interfaces (19B report 0x13 vs 17B report 0x08);
+        #    caps_probe must skip 19B and query ONLY the 17B path.
+        opened_paths = []
+        class Dev10C9:
+            def open_path(self, p): opened_paths.append(p)
+            def write(self, rep): return len(rep)
+            def read(self, l, timeout_ms=100): return packet(percent=65, voltage=4010)
+            def close(self): pass
+
+        devs_10c9 = [
+            dict(vendor_id=0x373B, product_id=0x10C9, interface_number=1, usage_page=0xFF02, usage=0x0002,
+                 path=r'\\?\hid#vid_373b&pid_10c9&mi_01#19b', serial_number='S10C9'),
+            dict(vendor_id=0x373B, product_id=0x10C9, interface_number=1, usage_page=0xFF02, usage=0x0002,
+                 path=r'\\?\hid#vid_373b&pid_10c9&mi_01#17b', serial_number='S10C9'),
+        ]
+        caps_10c9 = lambda p: (19, 19) if '19b' in str(p) else (17, 17)
+        tx1 = HidTransport(enumerate_fn=lambda: devs_10c9, device_factory=lambda: Dev10C9(), caps_probe=caps_10c9)
+        res1 = TargetQuery(transport=tx1, guard=lambda *a: nullcontext(), binding_store=bstore, legacy_history_probe=lambda: False)('q-10c9', 'auto', threading.Event())
+        self.assertTrue(res1['connected'])
+        self.assertEqual(res1['percent'], 65)
+        self.assertTrue(all('17b' in str(p) for p in opened_paths))
+
+        # 2) Real Windows HID path with unknown (None, None) output length must be rejected (0 writes)
+        writes_unk = []
+        class SpyDev:
+            def open_path(self, p): writes_unk.append(('open', p))
+            def write(self, rep): writes_unk.append(('write', rep)); return len(rep)
+            def read(self, l, timeout_ms=100): return []
+            def close(self): pass
+        devs_unk = [dict(vendor_id=0x373B, product_id=0x1278, interface_number=1, usage_page=0xFF02, usage=0x0002,
+                         path=r'\\?\hid#vid_373b&pid_1278&mi_01#unk', serial_number='SUNK')]
+        tx_unk = HidTransport(enumerate_fn=lambda: devs_unk, device_factory=lambda: SpyDev(), caps_probe=lambda p: (None, None))
+        res_unk = TargetQuery(transport=tx_unk, guard=lambda *a: nullcontext(), binding_store=bstore, legacy_history_probe=lambda: False)('q-unk', 'auto', threading.Event())
+        self.assertEqual(res_unk['outcome'], 'interface_not_found')
+        self.assertEqual(writes_unk, [])
+
+        # 3) 373B:12AF cross-protocol disambiguation:
+        #    - 0xFF02:0x0002 + 17B -> nordic52 wired (ATK Y9 Ultimate +)
+        #    - 0xFF05:0x0001 + 64B -> nordic54 wireless (BITMOUSE dongle)
+        devs_12af_compx = [dict(vendor_id=0x373B, product_id=0x12AF, interface_number=1, usage_page=0xFF02, usage=0x0002,
+                                path=r'\\?\hid#vid_373b&pid_12af#compx', serial_number='S12AFC')]
+        tx_12af_c = HidTransport(enumerate_fn=lambda: devs_12af_compx, device_factory=lambda: Dev10C9(), caps_probe=lambda p: (17, 17))
+        res_12af_c = TargetQuery(transport=tx_12af_c, guard=lambda *a: nullcontext(), binding_store=bstore, legacy_history_probe=lambda: False)('q-12af-c', 'auto', threading.Event())
+        self.assertTrue(res_12af_c['connected'])
+        self.assertEqual(res_12af_c['protocol_family'], 'nordic52')
+        self.assertEqual(res_12af_c['link_mode'], 'wired_usb')
+
+        class DevBitmouse:
+            def open_path(self, p): pass
+            def write(self, rep): return len(rep)
+            def read(self, l, timeout_ms=100):
+                r = [0] * 64
+                r[0] = 0x08; r[1] = 0x72; r[2] = 0x00; r[5] = 0x07; r[6] = 1; r[7] = 88
+                return r
+            def close(self): pass
+        devs_12af_bit = [dict(vendor_id=0x373B, product_id=0x12AF, interface_number=1, usage_page=0xFF05, usage=0x0001,
+                              path=r'\\?\hid#vid_373b&pid_12af#bit', serial_number='S12AFB')]
+        tx_12af_b = HidTransport(enumerate_fn=lambda: devs_12af_bit, device_factory=lambda: DevBitmouse(), caps_probe=lambda p: (64, 64))
+        res_12af_b = TargetQuery(transport=tx_12af_b, guard=lambda *a: nullcontext(), binding_store=bstore, legacy_history_probe=lambda: False)('q-12af-b', 'auto', threading.Event())
+        self.assertTrue(res_12af_b['connected'])
+        self.assertEqual(res_12af_b['protocol_family'], 'nordic54')
+        self.assertEqual(res_12af_b['percent'], 88)
+        self.assertIsNone(res_12af_b['voltage_mv'])
+
+    def test_v081_compx_cid_mid_z1_f1_cache_and_sleep_fallback(self):
+        def cid_mid_pkt(cid, mid):
+            p = [8, 0x10, 0, 0, 0, 2, cid, mid, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            p[-1] = (0x55 - sum(p)) % 256
+            return p
+
+        tmp = tempfile.TemporaryDirectory(dir=TEST_ROOT)
+        self.addCleanup(tmp.cleanup)
+        bstore = BindingStore(Path(tmp.name) / 'b.json')
+
+        # 1) Generic 373B:1278 answering 0x10 -> (1, 19) = ATK Z1 Ultimate 2.0 (uncalibrated firmware_reported) + session cache
+        writes_z1 = []
+        class Z1DongleDev:
+            last_cmd = None
+            def open_path(self, p): pass
+            def write(self, rep):
+                self.last_cmd = rep[1]
+                writes_z1.append(rep[1])
+                return len(rep)
+            def read(self, l, timeout_ms=100):
+                if self.last_cmd == 0x10:
+                    return cid_mid_pkt(1, 19)
+                return packet(percent=75, voltage=4180)
+            def close(self): pass
+
+        dev_1278 = [dict(vendor_id=0x373B, product_id=0x1278, interface_number=1, usage_page=0xFF02, usage=0x0002,
+                         output_report_length=17, path=b'fake-1278-z1', serial_number='SZ1U')]
+        tq_z1 = TargetQuery(lambda: dev_1278, lambda: Z1DongleDev(), lambda *a: nullcontext(),
+                            binding_store=bstore, legacy_history_probe=lambda: False)
+        r1 = tq_z1('q-z1-1', 'auto', threading.Event())
+        r2 = tq_z1('q-z1-2', 'auto', threading.Event())
+        self.assertTrue(r1['connected'] and r2['connected'])
+        self.assertEqual(r1['model_display_name'], 'ATK Z1 Ultimate 2.0')
+        self.assertEqual(r1['cid_mid'], '1,19')
+        self.assertIsNone(r1['lut_profile_id'])
+        self.assertEqual(r1['calibration_status'], 'uncalibrated')
+        self.assertEqual(r1['battery_source_mode'], 'firmware_reported')
+        self.assertEqual(writes_z1.count(0x10), 1)  # cached on 2nd poll
+
+        # 2) Generic 373B:1278 answering 0x10 -> (1, 8) = ATK F1 V2 Ultimate (calibrated LUT active)
+        class F1DongleDev(Z1DongleDev):
+            def read(self, l, timeout_ms=100):
+                if self.last_cmd == 0x10:
+                    return cid_mid_pkt(1, 8)
+                return packet(percent=80, voltage=4180)
+        dev_f1_1278 = [dict(vendor_id=0x373B, product_id=0x1278, interface_number=1, usage_page=0xFF02, usage=0x0002,
+                            output_report_length=17, path=b'fake-1278-f1', serial_number='SF1V2')]
+        r_f1 = TargetQuery(lambda: dev_f1_1278, lambda: F1DongleDev(), lambda *a: nullcontext(),
+                           binding_store=bstore, legacy_history_probe=lambda: False)('q-f1-1278', 'auto', threading.Event())
+        self.assertEqual(r_f1['model_id'], 'atk_f1_v2_ultimate')
+        self.assertEqual(r_f1['lut_profile_id'], 'atk_f1_v2_ultimate_cycle1_v1')
+        self.assertEqual(r_f1['battery_source_mode'], 'voltage_lut_1pct')
+
+        # 3) Wired 373B:11E4 -> F1 V2 Ultimate (LUT) vs wired 373B:1201 -> Z1 Ultimate 2.0 (no LUT)
+        class WiredBatDev:
+            def open_path(self, p): pass
+            def write(self, rep): return len(rep)
+            def read(self, l, timeout_ms=100): return packet(percent=70, voltage=4105)
+            def close(self): pass
+        r_f1_w = TargetQuery(
+            lambda: [dict(vendor_id=0x373B, product_id=0x11E4, interface_number=1, usage_page=0xFF02, usage=0x0002,
+                          output_report_length=17, path=b'w-11e4', serial_number='WF1')],
+            lambda: WiredBatDev(), lambda *a: nullcontext(), binding_store=bstore, legacy_history_probe=lambda: False,
+        )('q-w-f1', 'auto', threading.Event())
+        self.assertEqual(r_f1_w['model_id'], 'atk_f1_v2_ultimate')
+        self.assertEqual(r_f1_w['lut_profile_id'], 'atk_f1_v2_ultimate_cycle1_v1')
+
+        r_z1_w = TargetQuery(
+            lambda: [dict(vendor_id=0x373B, product_id=0x1201, interface_number=1, usage_page=0xFF02, usage=0x0002,
+                          output_report_length=17, path=b'w-1201', serial_number='WZ1')],
+            lambda: WiredBatDev(), lambda *a: nullcontext(), binding_store=bstore, legacy_history_probe=lambda: False,
+        )('q-w-z1', 'auto', threading.Event())
+        self.assertEqual(r_z1_w['model_id'], 'atk_z1_ultimate_2')
+        self.assertIsNone(r_z1_w['lut_profile_id'])
+
+        # 4) If 0x10 returns no reply (mouse asleep right after 0x04), 0x04 battery reading STILL succeeds!
+        class Timeout10Dev:
+            last_cmd = None
+            def open_path(self, p): pass
+            def write(self, rep): self.last_cmd = rep[1]; return len(rep)
+            def read(self, l, timeout_ms=100):
+                if self.last_cmd == 0x10:
+                    return []
+                return packet(percent=60, voltage=3990)
+            def close(self): pass
+        tx_tmo = HidTransport(enumerate_fn=lambda: dev_1278, device_factory=lambda: Timeout10Dev(),
+                              read_timeout_ms=100, slice_timeout_ms=40, write_delay_s=0.01)
+        r_tmo = TargetQuery(transport=tx_tmo, guard=lambda *a: nullcontext(), binding_store=bstore,
+                            legacy_history_probe=lambda: False)('q-tmo10', 'auto', threading.Event())
+        self.assertTrue(r_tmo['connected'])
+        self.assertEqual(r_tmo['percent'], 60)
+        self.assertIsNone(r_tmo['cid_mid'])
+        self.assertIsNone(r_tmo['lut_profile_id'])
+
+    def test_v081_nordic54_bitmouse_checksum_and_no_voltage(self):
+        c54 = Nordic54Codec()
+        req_wl = c54.build_request(wired=False)
+        req_wd = c54.build_request(wired=True)
+        self.assertEqual(req_wl[1], sum(req_wl[2:]) & 0xFF)
+        self.assertEqual(req_wl[1], 0x7D)
+        self.assertEqual(req_wd[1], sum(req_wd[2:]) & 0xFF)
+        self.assertEqual(req_wd[1], 0x7C)
+
+        # Declared payload length 0 must be rejected
+        bad_len = [0] * 64
+        bad_len[0] = 0x08; bad_len[1] = 0x72; bad_len[2] = 0x00; bad_len[5] = 0x07; bad_len[6] = 0; bad_len[7] = 50
+        self.assertEqual(c54.parse_response(bad_len, wired=True).failure_reason, 'invalid_length')
+
+        # Error status 0xFF maps to asleep
+        err_rep = [0] * 64
+        err_rep[0] = 0x08; err_rep[1] = 0x72; err_rep[2] = 0xFF; err_rep[5] = 0x07
+        self.assertTrue(c54.parse_response(err_rep, wired=False).asleep)
+
+        # Even with 4250 mV-like bytes in 8..9 on wired link, voltage_mv MUST remain None
+        ok_wd = [0] * 64
+        ok_wd[0] = 0x08; ok_wd[1] = 0x72; ok_wd[2] = 0x00; ok_wd[5] = 0x07; ok_wd[6] = 1; ok_wd[7] = 85
+        ok_wd[8] = 0x9A; ok_wd[9] = 0x10
+        parsed = c54.parse_response(ok_wd, wired=True)
+        self.assertTrue(parsed.present and parsed.percent_valid)
+        self.assertEqual(parsed.percent, 85)
+        self.assertIsNone(parsed.voltage_mv)
+        self.assertIsNone(parsed.voltage_raw)
+
+    def test_v081_unmatched_ui_no_f1_hardcode_and_diag_hid_redaction(self):
+        import zipfile
+        from dashboard import Dashboard
+        from exporter import collect_sanitized_ecosystem_hid_descriptors, export_redacted_diagnostic_zip
+
+        # 1) UI unmatched & unregistered ecosystem device shows no F1 V2 / 11D9 hardcoding
+        with patch('dashboard.read_samples', return_value=[]), \
+             patch('dashboard.TaskbarBadge.start', return_value=False):
+            w = Dashboard(start_worker=False)
+            self.addCleanup(lambda: (w.tray.hide(), w._cleanup_badge(), w.deleteLater()))
+            self.assertNotIn('F1 V2', w.card_model_label.text())
+            self.assertNotIn('11D9', w.profile_device_label.text())
+
+            now = datetime.now().astimezone()
+            ev_unreg = dict(
+                query_id='q-unreg', mode='auto', manual=False, connected=False,
+                outcome='receiver_absent', receiver=False, receiver_visibility='absent',
+                at=now, started_at=now, completed_at=now, elapsed_ms=1.0,
+                vid_pid=None, model_id=None, model_display_name='未检测到已适配设备',
+                brand='ATK-Pulse', lut_profile_id=None, binding_state='unknown',
+                unregistered_ecosystem_vid_pids=['373B:108C'], last_success=None,
+            )
+            w.on_result(ev_unreg)
+            APP.processEvents()
+            self.assertNotIn('F1 V2', w.card_model_label.text())
+            self.assertIn('373B:108C', w.card_model_label.text())
+            self.assertIn('373B:108C', w.profile_device_label.text())
+            self.assertEqual(w.slot_state_pill.text(), '未适配')
+            self.assertNotIn('F1 V2', w.tray.toolTip())
+            self.assertNotIn('F1 V2', w.badge.tooltip_text)
+
+            ev_empty = dict(ev_unreg, unregistered_ecosystem_vid_pids=[])
+            w.on_result(ev_empty)
+            APP.processEvents()
+            self.assertEqual(w.card_model_label.text(), '未检测到已适配设备')
+            self.assertEqual(w.slot_state_pill.text(), '未连接')
+
+        # 2) Read-only sanitized HID enumeration filters non-ecosystem VIDs and strips raw path/serial
+        raw_devs = [
+            dict(vendor_id=0x046D, product_id=0xC548, interface_number=0, usage_page=0xFF00, usage=0x0001,
+                 product_string='Logi Bolt', manufacturer_string='Logitech', serial_number='LOGI-1',
+                 path=br'\\?\hid#vid_046d&pid_c548#secret'),
+            dict(vendor_id=0x373B, product_id=0x108C, interface_number=1, usage_page=0xFFB3, usage=0x0001,
+                 product_string='ATK 8k Dongle Nearlink Version', manufacturer_string='ATK', serial_number='ATK-SECRET-SN',
+                 path=br'\\?\hid#vid_373b&pid_108c&mi_01#user_secret_path'),
+        ]
+        sanitized = collect_sanitized_ecosystem_hid_descriptors(
+            enumerate_fn=lambda: raw_devs,
+            caps_probe=lambda p: (64, 64),
+        )
+        self.assertEqual(len(sanitized), 1)
+        item = sanitized[0]
+        self.assertEqual(item['vid_pid'], '373B:108C')
+        self.assertEqual(item['usage_page'], '0xFFB3')
+        self.assertEqual(item['output_report_length'], 64)
+        self.assertTrue(item['has_serial'])
+        self.assertTrue(bool(item['path_hash']))
+        self.assertNotIn('ATK-SECRET-SN', json.dumps(item))
+        self.assertNotIn('user_secret_path', json.dumps(item))
+
+        with tempfile.TemporaryDirectory(dir=TEST_ROOT) as tmp:
+            zip_path = export_redacted_diagnostic_zip(
+                Path(tmp) / 'diag_unmatched.zip',
+                rows=[],
+                device_info={'vid_pid': None, 'model_id': None, 'outcome': 'receiver_absent'},
+                hid_descriptors=raw_devs,
+            )
+            with zipfile.ZipFile(zip_path, 'r') as zf:
+                hid_txt = zf.read('hid_descriptors_sanitized.json').decode('utf-8')
+                snap_txt = zf.read('device_profile_snapshot.json').decode('utf-8')
+                self.assertIn('373B:108C', hid_txt)
+                self.assertNotIn('046D', hid_txt)
+                self.assertNotIn('ATK-SECRET-SN', hid_txt)
+                self.assertNotIn('user_secret_path', hid_txt)
+                self.assertNotIn('373B:11D9', snap_txt)
+                self.assertNotIn('atk_f1_v2_ultimate', snap_txt)
+
+    def test_v081_device_change_trailing_coalesce_and_bounded_replug_retry(self):
+        from dashboard import Dashboard
+
+        class FakeWorker:
+            def __init__(self):
+                self.resumes = 0
+
+            def resume(self):
+                self.resumes += 1
+
+        with patch('dashboard.read_samples', return_value=[]), \
+             patch('dashboard.TaskbarBadge.start', return_value=False):
+            w = Dashboard(start_worker=False)
+            self.addCleanup(lambda: (w.tray.hide(), w._cleanup_badge(), w.deleteLater()))
+            w.worker = FakeWorker()
+
+            # Leading-edge device removal resumes immediately and arms bounded retries
+            self.assertTrue(w.handle_native_event(0x0219, 0x8004, now=100.0))
+            self.assertEqual(w.worker.resumes, 1)
+            self.assertEqual(w._replug_retries_remaining, len(w.REPLUG_RETRY_DELAYS_MS))
+
+            # Quick replug + devnodes burst inside 4s window must schedule trailing refresh
+            self.assertFalse(w.handle_native_event(0x0219, 0x8000, now=101.5))
+            self.assertTrue(w._device_change_trailing_timer.isActive())
+            self.assertFalse(w.handle_native_event(0x0219, 7, now=102.0))
+            self.assertTrue(w._device_change_trailing_timer.isActive())
+
+            # Trailing timer fires one coalesced resume
+            w._device_change_trailing_timer.stop()
+            w._on_device_change_trailing_timeout(now=103.2)
+            self.assertEqual(w.worker.resumes, 2)
+            self.assertEqual(w._replug_retries_remaining, len(w.REPLUG_RETRY_DELAYS_MS))
+
+            now = datetime.now().astimezone()
+            absent_ev = dict(
+                query_id='q-absent', mode='auto', manual=False, connected=False,
+                outcome='receiver_absent', receiver=False, receiver_visibility='absent',
+                at=now, started_at=now, completed_at=now, elapsed_ms=5.0,
+                vid_pid=None, model_id=None, lut_profile_id=None, binding_state='unknown',
+                last_success=None,
+            )
+
+            # Bounded follow-up checks on early receiver_absent: max len(REPLUG_RETRY_DELAYS_MS) == 2
+            w.on_result(dict(absent_ev, query_id='q-abs-1'))
+            self.assertTrue(w._replug_retry_timer.isActive())
+            self.assertEqual(w._replug_retries_remaining, 1)
+            w._replug_retry_timer.stop()
+            w._on_replug_retry_timeout()
+            self.assertEqual(w.worker.resumes, 3)
+
+            w.on_result(dict(absent_ev, query_id='q-abs-2'))
+            self.assertTrue(w._replug_retry_timer.isActive())
+            self.assertEqual(w._replug_retries_remaining, 0)
+            w._replug_retry_timer.stop()
+            w._on_replug_retry_timeout()
+            self.assertEqual(w.worker.resumes, 4)
+
+            # Third receiver_absent must NOT re-arm (no infinite loop)
+            w.on_result(dict(absent_ev, query_id='q-abs-3'))
+            self.assertFalse(w._replug_retry_timer.isActive())
+            self.assertEqual(w._replug_retries_remaining, 0)
+
+            # Replug outside window re-arms; stale 'cancelled' result must not clear retries; connect clears them
+            self.assertTrue(w.handle_native_event(0x0219, 0x8000, now=120.0))
+            self.assertEqual(w.worker.resumes, 5)
+            self.assertEqual(w._replug_retries_remaining, 2)
+            w.on_result(dict(absent_ev, query_id='q-cancel', outcome='cancelled'))
+            self.assertEqual(w._replug_retries_remaining, 2)
+            w.on_result(dict(absent_ev, query_id='q-abs-4'))
+            self.assertTrue(w._replug_retry_timer.isActive())
+            self.assertEqual(w._replug_retries_remaining, 1)
+
+            conn_ev = dict(
+                query_id='q-ok', mode='auto', manual=False, connected=True,
+                outcome='ok', receiver=True, receiver_visibility='present',
+                at=now, started_at=now, completed_at=now, elapsed_ms=12.0,
+                vid_pid='373B:11D9', device_uid='hid_f1', device_id='atk_f1_v2_ultimate_8k',
+                model_id='atk_f1_v2_ultimate', model_display_name='ATK F1 V2 Ultimate (8K)',
+                brand='ATK', lut_profile_id='atk_f1_v2_ultimate_cycle1_v1',
+                binding_state='bound', protocol_family='nordic52', verification_tier='verified',
+                link_mode='wireless', link_byte=1,
+                last_success={
+                    'at': now, 'percent': 40, 'voltage_mv': 3845, 'voltage_raw': 3845,
+                    'device_id': 'atk_f1_v2_ultimate_8k', 'device_uid': 'hid_f1',
+                    'vid_pid': '373B:11D9', 'model_id': 'atk_f1_v2_ultimate',
+                    'model_display_name': 'ATK F1 V2 Ultimate (8K)',
+                    'lut_profile_id': 'atk_f1_v2_ultimate_cycle1_v1',
+                    'binding_state': 'bound', 'protocol_family': 'nordic52',
+                    'link_mode': 'wireless', 'link_byte': 1, 'query_id': 'q-ok',
+                },
+            )
+            w.on_result(conn_ev)
+            self.assertFalse(w._replug_retry_timer.isActive())
+            self.assertEqual(w._replug_retries_remaining, 0)
+
+    def test_v081_calibrated_disconnect_preserves_voltage_estimate_and_uncalibrated_stays_firmware(self):
+        from dashboard import Dashboard
+
+        now = datetime.now().astimezone()
+        f1_last = {
+            'at': now, 'percent': 40, 'voltage_mv': 3845, 'voltage_raw': 3845,
+            'device_id': 'atk_f1_v2_ultimate_8k', 'device_uid': 'hid_test_f1',
+            'vid_pid': '373B:11D9', 'model_id': 'atk_f1_v2_ultimate',
+            'model_display_name': 'ATK F1 V2 Ultimate (8K)',
+            'lut_profile_id': 'atk_f1_v2_ultimate_cycle1_v1',
+            'binding_state': 'bound', 'protocol_family': 'nordic52',
+            'link_mode': 'wireless', 'link_byte': 1, 'query_id': 'q1',
+        }
+        ev_f1_online = dict(
+            query_id='q1', mode='auto', manual=False, connected=True,
+            outcome='ok', receiver=True, receiver_visibility='present',
+            at=now, started_at=now, completed_at=now, elapsed_ms=10.0,
+            vid_pid='373B:11D9', device_uid='hid_test_f1', device_id='atk_f1_v2_ultimate_8k',
+            model_id='atk_f1_v2_ultimate', model_display_name='ATK F1 V2 Ultimate (8K)',
+            brand='ATK', lut_profile_id='atk_f1_v2_ultimate_cycle1_v1',
+            binding_state='bound', protocol_family='nordic52', verification_tier='verified',
+            link_mode='wireless', link_byte=1, last_success=f1_last,
+        )
+        ev_f1_absent = dict(
+            query_id='q2', mode='auto', manual=False, connected=False,
+            outcome='receiver_absent', receiver=False, receiver_visibility='absent',
+            at=now, started_at=now, completed_at=now, elapsed_ms=6.0,
+            vid_pid=None, device_uid=None, device_id=None,
+            model_id=None, model_display_name=None,
+            lut_profile_id=None, binding_state='unknown',
+            last_success=f1_last,
+        )
+
+        with patch('dashboard.read_samples', return_value=[]), \
+             patch('dashboard.TaskbarBadge.start', return_value=False):
+            # 1) Online calibrated reading -> unplug receiver must keep 42% & 电压估算
+            w = Dashboard(start_worker=False)
+            self.addCleanup(lambda: (w.tray.hide(), w._cleanup_badge(), w.deleteLater()))
+            w.on_result(ev_f1_online)
+            APP.processEvents()
+            self.assertEqual(w.main_pct.text(), '42%')
+            self.assertEqual(w.badge_est_type.text(), '● 电压估算')
+
+            w.on_result(ev_f1_absent)
+            APP.processEvents()
+            self.assertEqual(w.main_pct.text(), '42%')
+            self.assertEqual(w.badge_est_type.text(), '● 电压估算')
+            self.assertEqual(w.card_brand_label.text(), 'ATK')
+            self.assertEqual(w.card_model_label.text(), 'F1 V2 Ultimate (8K)')
+            self.assertEqual(w.slot_state_pill.text(), '未连接')
+
+            # 2) Cold start offline with cached calibrated F1 V2 record must also show 42% & 电压估算
+            w_cold = Dashboard(start_worker=False)
+            self.addCleanup(lambda: (w_cold.tray.hide(), w_cold._cleanup_badge(), w_cold.deleteLater()))
+            w_cold.on_result(ev_f1_absent)
+            APP.processEvents()
+            self.assertEqual(w_cold.main_pct.text(), '42%')
+            self.assertEqual(w_cold.badge_est_type.text(), '● 电压估算')
+            self.assertEqual(w_cold.card_brand_label.text(), 'ATK')
+            self.assertEqual(w_cold.card_model_label.text(), 'F1 V2 Ultimate (8K)')
+
+            # 3) Uncalibrated device disconnect must remain on firmware raw
+            r1_last = {
+                'at': now, 'percent': 65, 'voltage_mv': 3920, 'voltage_raw': 3920,
+                'device_id': 'compx_373b_11df_r1', 'device_uid': 'hid_test_r1',
+                'vid_pid': '373B:11DF', 'model_id': 'vxe_r1',
+                'model_display_name': 'VXE R1', 'lut_profile_id': None,
+                'binding_state': 'cid_mid_resolved', 'protocol_family': 'nordic52',
+                'link_mode': 'wireless', 'link_byte': 1, 'query_id': 'q3',
+            }
+            ev_r1_online = dict(
+                query_id='q3', mode='auto', manual=False, connected=True,
+                outcome='ok', receiver=True, receiver_visibility='present',
+                at=now, started_at=now, completed_at=now, elapsed_ms=10.0,
+                vid_pid='373B:11DF', device_uid='hid_test_r1', device_id='compx_373b_11df_r1',
+                model_id='vxe_r1', model_display_name='VXE R1',
+                brand='VXE', lut_profile_id=None, binding_state='cid_mid_resolved',
+                protocol_family='nordic52', verification_tier='catalog_only',
+                link_mode='wireless', link_byte=1, last_success=r1_last,
+            )
+            ev_r1_absent = dict(ev_f1_absent, query_id='q4', last_success=r1_last)
+            w_r1 = Dashboard(start_worker=False)
+            self.addCleanup(lambda: (w_r1.tray.hide(), w_r1._cleanup_badge(), w_r1.deleteLater()))
+            w_r1.on_result(ev_r1_online)
+            APP.processEvents()
+            self.assertEqual(w_r1.main_pct.text(), '65%')
+            self.assertEqual(w_r1.badge_est_type.text(), '● 固件原报')
+            w_r1.on_result(ev_r1_absent)
+            APP.processEvents()
+            self.assertEqual(w_r1.main_pct.text(), '65%')
+            self.assertEqual(w_r1.badge_est_type.text(), '● 固件原报')
+            self.assertEqual(w_r1.card_brand_label.text(), 'VXE')
+            self.assertEqual(w_r1.card_model_label.text(), 'R1')
 
 
 if __name__=='__main__':

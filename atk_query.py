@@ -27,6 +27,28 @@ VID, PID = 0x373B, 0x11D9
 _DEFAULT_REGISTRY = DeviceRegistry.load()
 MODEL = _DEFAULT_REGISTRY.get_model("atk_f1_v2_ultimate")
 
+ECOSYSTEM_VIDS = frozenset({0x373B, 0x3554, 0x391D})
+ECOSYSTEM_KEYWORDS = ("atk", "vxe", "vgn", "dragonfly", "blazing")
+
+
+def find_unregistered_ecosystem_vid_pids(all_devices: list[dict], registry: DeviceRegistry) -> list[str]:
+    """Pure in-memory scan for ATK/VXE/VGN ecosystem devices missing from whitelist."""
+    found: set[str] = set()
+    for d in all_devices or ():
+        vid = d.get("vendor_id")
+        pid = d.get("product_id")
+        if vid is None or pid is None:
+            continue
+        vid_i, pid_i = int(vid), int(pid)
+        if registry.get_receivers(vid_i, pid_i) or registry.is_excluded(vid_i, pid_i):
+            continue
+        prod = str(d.get("product_string") or "").lower()
+        mfg = str(d.get("manufacturer_string") or "").lower()
+        text = f"{prod} {mfg}"
+        if vid_i in ECOSYSTEM_VIDS or any(kw in text for kw in ECOSYSTEM_KEYWORDS):
+            found.add(f"{vid_i:04X}:{pid_i:04X}")
+    return sorted(found)
+
 
 @contextmanager
 def device_guard(mutex_name: str = "Local\\ATK_Battery_373B_11D9_query"):
@@ -77,6 +99,7 @@ class TargetQuery:
             device_factory=device_factory,
         )
         self.guard = guard or device_guard
+        self._cid_mid_cache: dict[tuple[str, str], tuple[int, int]] = {}
 
     def _select_receiver_hit(self, devices: list[dict]):
         """Select highest-priority whitelisted receiver present on the bus."""
@@ -123,9 +146,9 @@ class TargetQuery:
             device_identity_basis="unknown",
             vid_pid=None,
             model_id=None,
-            model_display_name=MODEL.display_name if MODEL else "ATK Wireless Mouse",
-            brand="ATK",
-            name=MODEL.display_name if MODEL else "ATK Wireless Mouse",
+            model_display_name="未检测到已适配设备",
+            brand="ATK-Pulse",
+            name="未检测到已适配设备",
             verification_tier="catalog_only",
             calibration_status="uncalibrated",
             lut_profile_id=None,
@@ -134,6 +157,8 @@ class TargetQuery:
             binding_state="unknown",
             candidate_models=[],
             recommended_model_id=None,
+            unregistered_ecosystem_vid_pids=[],
+            cid_mid=None,
             battery_source_mode="firmware_reported",
             response_freshness="unverified",
             device_measured_at=None,
@@ -147,7 +172,12 @@ class TargetQuery:
             all_devices = self.transport.enumerate_all()
             hit = self._select_receiver_hit(all_devices)
             if hit is None:
-                event.update(receiver_visibility="absent", receiver=False, outcome="receiver_absent")
+                event.update(
+                    receiver_visibility="absent",
+                    receiver=False,
+                    outcome="receiver_absent",
+                    unregistered_ecosystem_vid_pids=find_unregistered_ecosystem_vid_pids(all_devices, self.registry),
+                )
                 return event
 
             receiver, vid_pid_devs, matches = hit
@@ -279,6 +309,74 @@ class TargetQuery:
                         )
                     else:
                         src_mode = "firmware_reported"
+
+                    if (
+                        receiver.protocol_family == "nordic52"
+                        and receiver.link_role == "wireless_dongle"
+                        and not cancel.is_set()
+                    ):
+                        cache_key = (device_uid, event["collection_path_hash"])
+                        if cache_key not in self._cid_mid_cache and hasattr(codec, "build_cid_mid_request"):
+                            try:
+                                req_id = codec.build_cid_mid_request()
+                                raw_id, id_err = self.transport.transact(
+                                    path,
+                                    req_id,
+                                    codec.response_length,
+                                    cancel_event=cancel,
+                                    query_id=query_id,
+                                    read_timeout_ms=250,
+                                    write_delay_s=0.02,
+                                )
+                                if id_err is None:
+                                    parsed_cm = codec.parse_cid_mid_response(raw_id)
+                                    if parsed_cm is not None:
+                                        self._cid_mid_cache[cache_key] = parsed_cm
+                            except Exception:
+                                log.debug("query=%s optional 0x10 CID/MID read skipped", query_id, exc_info=True)
+
+                        cached_cm = self._cid_mid_cache.get(cache_key)
+                        if cached_cm is not None:
+                            cid, mid = cached_cm
+                            event["cid_mid"] = f"{cid},{mid}"
+                            cid_model = self.registry.lookup_compx_cid_mid(cid, mid)
+                            if cid_model is not None:
+                                if resolved.binding_state == "bound":
+                                    pass
+                                elif resolved.binding_state == "ambiguous_unbound":
+                                    if cid_model.lut_profile_id is not None:
+                                        event["recommended_model_id"] = cid_model.model_id
+                                    else:
+                                        event.update(
+                                            model_id=cid_model.model_id,
+                                            model_display_name=cid_model.display_name,
+                                            name=cid_model.display_name,
+                                            brand=cid_model.brand,
+                                            verification_tier=cid_model.verification_tier,
+                                            calibration_status="uncalibrated",
+                                            lut_profile_id=None,
+                                            binding_state="cid_mid_resolved",
+                                        )
+                                        src_mode = "firmware_reported"
+                                else:
+                                    event.update(
+                                        model_id=cid_model.model_id,
+                                        model_display_name=cid_model.display_name,
+                                        name=cid_model.display_name,
+                                        brand=cid_model.brand,
+                                        verification_tier=cid_model.verification_tier,
+                                        calibration_status=cid_model.calibration_status,
+                                        lut_profile_id=cid_model.lut_profile_id,
+                                    )
+                                    if cid_model.lut_profile_id:
+                                        src_mode = (
+                                            "voltage_lut_1pct"
+                                            if reading.voltage_mv is not None
+                                            else "firmware_fallback_no_voltage"
+                                        )
+                                    else:
+                                        src_mode = "firmware_reported"
+
                     event.update(
                         outcome="success",
                         connected=True,

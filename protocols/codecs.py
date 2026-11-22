@@ -39,6 +39,7 @@ class Nordic52Codec(ProtocolCodec):
 
     _REPORT_ID = 0x08
     _CMD_BATTERY = 0x04
+    _CMD_CID_MID = 0x10
     _CHECKSUM_TARGET = 0x55
 
     def build_request(self, *, wired: bool = False) -> list[int]:
@@ -47,6 +48,29 @@ class Nordic52Codec(ProtocolCodec):
         pkt[1] = self._CMD_BATTERY
         pkt[16] = (self._CHECKSUM_TARGET - (pkt[0] + pkt[1])) % 256  # 0x49
         return pkt
+
+    def build_cid_mid_request(self) -> list[int]:
+        """Build read-only GetMouseCIDMID (0x10) frame for CompX mice/receivers."""
+        pkt = [0] * 17
+        pkt[0] = self._REPORT_ID
+        pkt[1] = self._CMD_CID_MID
+        pkt[16] = (self._CHECKSUM_TARGET - (pkt[0] + pkt[1])) % 256  # 0x3D
+        return pkt
+
+    def parse_cid_mid_response(self, data: Sequence[int] | None) -> tuple[int, int] | None:
+        """Decode read-only 0x10 reply into (CID, MID), or None if invalid/zero."""
+        if not data or len(data) != 17:
+            return None
+        if data[0] != self._REPORT_ID or data[1] != self._CMD_CID_MID:
+            return None
+        if sum(data) % 256 != self._CHECKSUM_TARGET:
+            return None
+        if data[2] != 0x00:
+            return None
+        cid, mid = int(data[6]), int(data[7])
+        if cid == 0 and mid == 0:
+            return None
+        return cid, mid
 
     def parse_response(self, data: Sequence[int] | None, *, wired: bool = False) -> PacketReading:
         if not data:
@@ -93,14 +117,13 @@ class Nordic52Codec(ProtocolCodec):
 
 
 class Nordic54Codec(ProtocolCodec):
-    """Compx / Nordic nRF54L15 64-byte protocol on usage_page=0xFF05, usage=0x0001."""
+    """Compx / Nordic nRF54L15 & ATK BITMOUSE 64-byte protocol on usage_page=0xFF05, usage=0x0001."""
 
     family = "nordic54"
     protocol_status = "ready"
     response_length = 64
 
     _REPORT_ID = 0x08
-    _REQ_TAG = 0x7D
     _CMD_READ = 0x72
     _REQ_LEN = 0x02
     _SUB_BATTERY = 0x07
@@ -108,18 +131,18 @@ class Nordic54Codec(ProtocolCodec):
     def build_request(self, *, wired: bool = False) -> list[int]:
         pkt = [0] * 64
         pkt[0] = self._REPORT_ID
-        pkt[1] = self._REQ_TAG
         pkt[2] = self._CMD_READ
         pkt[3] = self._REQ_LEN
         pkt[5] = 0x00 if wired else 0x01
         pkt[6] = self._SUB_BATTERY
         pkt[7] = 0x01
+        pkt[1] = sum(pkt[2:]) & 0xFF  # 0x7D wireless, 0x7C wired
         return pkt
 
     def parse_response(self, data: Sequence[int] | None, *, wired: bool = False) -> PacketReading:
         if not data:
             return PacketReading(present=False, failure_reason="no_response")
-        if len(data) < 10:
+        if len(data) < 8:
             return PacketReading(present=False, failure_reason="invalid_length")
         if data[0] != self._REPORT_ID:
             return PacketReading(present=False, failure_reason="invalid_report_id")
@@ -135,6 +158,13 @@ class Nordic54Codec(ProtocolCodec):
                 charging=None,
                 charging_state=CHARGING_STATE_UNKNOWN,
             )
+        if int(data[6]) < 1:
+            return PacketReading(
+                present=False,
+                packet_valid=True,
+                percent_valid=False,
+                failure_reason="invalid_length",
+            )
 
         pct = int(data[7])
         if not 0 <= pct <= 100:
@@ -145,36 +175,18 @@ class Nordic54Codec(ProtocolCodec):
                 failure_reason="invalid_percent",
             )
 
-        if not wired:
-            # Wireless replies carry uncalibrated/junk bytes at offsets 8-9; do not read voltage.
-            return PacketReading(
-                present=True,
-                percent=pct,
-                voltage_mv=None,
-                voltage_raw=None,
-                voltage_validation="not_supported_on_link",
-                packet_valid=True,
-                percent_valid=True,
-                status_byte=int(data[2]),
-                link_byte=0,
-                asleep=False,
-                failure_reason=None,
-                charging=None,
-                charging_state=CHARGING_STATE_UNKNOWN,
-            )
-
-        raw_mv = int(data[8]) | (int(data[9]) << 8)
-        in_range = VOLTAGE_MIN_MV <= raw_mv <= VOLTAGE_MAX_MV
+        # BITMOUSE 0x07 GetBatteryLevel returns 1 payload byte (offset 7) only;
+        # trailing bytes 8..9 are buffer leftovers on both wireless and wired links.
         return PacketReading(
             present=True,
             percent=pct,
-            voltage_mv=raw_mv if in_range else None,
-            voltage_raw=raw_mv,
-            voltage_validation="candidate_in_range" if in_range else "candidate_out_of_range",
+            voltage_mv=None,
+            voltage_raw=None,
+            voltage_validation="not_supported_on_link",
             packet_valid=True,
             percent_valid=True,
             status_byte=int(data[2]),
-            link_byte=1,
+            link_byte=1 if wired else 0,
             asleep=False,
             failure_reason=None,
             charging=None,

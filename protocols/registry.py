@@ -32,6 +32,8 @@ def _parse_hid_rule(raw: dict | None, fallback: HidMatchRule) -> HidMatchRule:
         usage_page=_parse_int(raw.get("usage_page")) if "usage_page" in raw else fallback.usage_page,
         usage=_parse_int(raw.get("usage")) if "usage" in raw else fallback.usage,
         interface_number=raw.get("interface_number", fallback.interface_number),
+        output_report_length=raw.get("output_report_length", fallback.output_report_length),
+        input_report_length=raw.get("input_report_length", fallback.input_report_length),
     )
 
 
@@ -57,10 +59,17 @@ class DeviceRegistry:
         receivers: dict[str, ReceiverEntry],
         models: dict[str, ModelEntry],
         protocol_statuses: dict[str, str],
+        multi_protocol_receivers: list[ReceiverEntry] | tuple[ReceiverEntry, ...] = (),
+        excluded_vid_pids: set[str] | frozenset[str] = frozenset(),
+        compx_cid_mid_catalog: dict[str, dict[str, str]] | None = None,
     ) -> None:
         self.receivers = receivers
         self.models = models
         self.protocol_statuses = protocol_statuses
+        self.multi_protocol_receivers = list(multi_protocol_receivers)
+        self._all_receivers = list(receivers.values()) + self.multi_protocol_receivers
+        self.excluded_vid_pids = frozenset(vp.upper() for vp in excluded_vid_pids)
+        self.compx_cid_mid_catalog = dict(compx_cid_mid_catalog or {})
 
     @classmethod
     def load(cls, path: Path | None = None) -> "DeviceRegistry":
@@ -81,6 +90,8 @@ class DeviceRegistry:
                 usage_page=_parse_int(hm.get("usage_page")),
                 usage=_parse_int(hm.get("usage")),
                 interface_number=hm.get("interface_number"),
+                output_report_length=hm.get("output_report_length"),
+                input_report_length=hm.get("input_report_length"),
             )
 
         models: dict[str, ModelEntry] = {}
@@ -97,15 +108,14 @@ class DeviceRegistry:
                 firmware_percent_step=mraw.get("firmware_percent_step"),
             )
 
-        receivers: dict[str, ReceiverEntry] = {}
-        for vp, rraw in raw.get("receivers", {}).items():
+        def _parse_receiver_entry(vp_str: str, rraw: dict) -> ReceiverEntry:
             fam = rraw["protocol_family"]
             rule = _parse_hid_rule(rraw.get("hid_match_override"), proto_defaults.get(fam, HidMatchRule()))
             vid = _parse_int(rraw["vid"])
             pid = _parse_int(rraw["pid"])
             assert vid is not None and pid is not None
-            receivers[vp.upper()] = ReceiverEntry(
-                vid_pid=vp.upper(),
+            return ReceiverEntry(
+                vid_pid=vp_str.upper(),
                 vid=vid,
                 pid=pid,
                 link_role=rraw["link_role"],
@@ -115,17 +125,64 @@ class DeviceRegistry:
                 shared_pid_collision=bool(rraw.get("shared_pid_collision", False)),
             )
 
-        return cls(receivers=receivers, models=models, protocol_statuses=proto_statuses)
+        receivers: dict[str, ReceiverEntry] = {}
+        for vp, rraw in raw.get("receivers", {}).items():
+            receivers[vp.upper()] = _parse_receiver_entry(vp, rraw)
+
+        multi_receivers: list[ReceiverEntry] = []
+        for rraw in raw.get("multi_protocol_receivers", []):
+            vp = rraw["vid_pid"]
+            multi_receivers.append(_parse_receiver_entry(vp, rraw))
+
+        excluded = frozenset(str(vp).upper() for vp in raw.get("excluded_vid_pids", []))
+        cid_mid_catalog = dict(raw.get("compx_cid_mid_catalog") or {})
+
+        return cls(
+            receivers=receivers,
+            models=models,
+            protocol_statuses=proto_statuses,
+            multi_protocol_receivers=multi_receivers,
+            excluded_vid_pids=excluded,
+            compx_cid_mid_catalog=cid_mid_catalog,
+        )
 
     def receiver_list(self) -> list[ReceiverEntry]:
         """Return whitelisted receivers ordered wireless-first for probing."""
         return sorted(
-            self.receivers.values(),
-            key=lambda r: (0 if r.link_role == "wireless_dongle" else 1, r.vid_pid),
+            self._all_receivers,
+            key=lambda r: (0 if r.link_role == "wireless_dongle" else 1, r.vid_pid, r.protocol_family),
         )
 
     def get_receiver(self, vid: int, pid: int) -> ReceiverEntry | None:
         return self.receivers.get(f"{vid:04X}:{pid:04X}")
+
+    def get_receivers(self, vid: int, pid: int) -> list[ReceiverEntry]:
+        vp = f"{vid:04X}:{pid:04X}"
+        return [r for r in self._all_receivers if r.vid_pid == vp]
+
+    def is_excluded(self, vid: int, pid: int) -> bool:
+        return f"{vid:04X}:{pid:04X}" in self.excluded_vid_pids
+
+    def lookup_compx_cid_mid(self, cid: int, mid: int) -> ModelEntry | None:
+        """Resolve a CompX (CID, MID) pair to a ModelEntry without inventing any LUT."""
+        item = self.compx_cid_mid_catalog.get(f"{int(cid)},{int(mid)}")
+        if not item:
+            return None
+        model_id = item["model_id"]
+        existing = self.models.get(model_id)
+        if existing is not None:
+            return existing
+        return ModelEntry(
+            model_id=model_id,
+            brand=item.get("brand", "ATK"),
+            display_name=item.get("display_name", f"ATK Mouse ({cid},{mid})"),
+            verification_tier="catalog_only",
+            calibration_status="uncalibrated",
+            lut_profile_id=None,
+            protocol_family="nordic52",
+            voltage_capability="wireless_candidate_mv_unverified",
+            firmware_percent_step=5,
+        )
 
     def get_model(self, model_id: str) -> ModelEntry | None:
         return self.models.get(model_id)

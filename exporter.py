@@ -39,6 +39,9 @@ _POSIX_USER_RE = re.compile(r"(/(?:Users|home)/)([^/\s]+)")
 _HID_PATH_RE = re.compile(r"(?i)\\\\\?\\hid#[^\s\"'<>]+")
 _WIN_ABS_PATH_RE = re.compile(r"[A-Za-z]:\\(?:[^\s\"'<>]+)")
 
+ECOSYSTEM_VIDS = frozenset({0x373B, 0x3554, 0x391D})
+ECOSYSTEM_KEYWORDS = ("atk", "vxe", "vgn", "dragonfly", "blazing")
+
 
 def salted_hash(raw_value: str, salt: str = "atk-pulse-offline-v1") -> str:
     """Return deterministic 16-char salted SHA256 digest for private identifiers."""
@@ -186,12 +189,121 @@ def export_cycle_csv(rows, output_path, *, estimates=None) -> Path:
     return target
 
 
+def _fmt_hex16(val) -> str | None:
+    if val is None:
+        return None
+    if isinstance(val, int):
+        return f"0x{val:04X}"
+    s = str(val).strip()
+    if not s:
+        return None
+    try:
+        return f"0x{int(s, 0):04X}"
+    except ValueError:
+        return sanitize_text(s)
+
+
+def _parse_vid_pid_int(val) -> int | None:
+    if val is None:
+        return None
+    if isinstance(val, int):
+        return val
+    try:
+        return int(str(val).strip(), 0)
+    except ValueError:
+        return None
+
+
+def sanitize_hid_descriptors(raw_descriptors, *, caps_probe=None) -> list[dict]:
+    """Filter to ATK/VXE/VGN ecosystem HID interfaces and strip all paths/serials."""
+    out: list[dict] = []
+    for d in raw_descriptors or ():
+        if not isinstance(d, dict):
+            continue
+        vid_i = _parse_vid_pid_int(d.get("vendor_id"))
+        pid_i = _parse_vid_pid_int(d.get("product_id"))
+        if (vid_i is None or pid_i is None) and isinstance(d.get("vid_pid"), str) and ":" in d["vid_pid"]:
+            parts = d["vid_pid"].split(":", 1)
+            try:
+                vid_i = int(parts[0], 16)
+                pid_i = int(parts[1], 16)
+            except ValueError:
+                continue
+        if vid_i is None or pid_i is None:
+            continue
+
+        prod_raw = str(d.get("product_string") or "")
+        mfg_raw = str(d.get("manufacturer_string") or "")
+        text = f"{prod_raw} {mfg_raw}".lower()
+        if vid_i not in ECOSYSTEM_VIDS and not any(kw in text for kw in ECOSYSTEM_KEYWORDS):
+            continue
+
+        out_len = d.get("output_report_length")
+        in_len = d.get("input_report_length")
+        raw_path = d.get("path") or d.get("device_path")
+        if (out_len is None or in_len is None) and raw_path and caps_probe is not None:
+            try:
+                c_out, c_in = caps_probe(raw_path)
+                if out_len is None:
+                    out_len = c_out
+                if in_len is None:
+                    in_len = c_in
+            except Exception:
+                pass
+
+        if raw_path:
+            path_str = bytes(raw_path).decode("utf-8", errors="ignore") if isinstance(raw_path, (bytes, bytearray)) else str(raw_path)
+            path_hash = salted_hash(path_str)
+        else:
+            path_hash = str(d.get("path_hash") or "")
+
+        serial_raw = str(d.get("serial_number") or "").strip()
+        has_serial = bool(serial_raw) if "serial_number" in d else bool(d.get("has_serial", False))
+
+        out.append({
+            "vid_pid": f"{vid_i:04X}:{pid_i:04X}",
+            "vendor_id": f"0x{vid_i:04X}",
+            "product_id": f"0x{pid_i:04X}",
+            "usage_page": _fmt_hex16(d.get("usage_page")),
+            "usage": _fmt_hex16(d.get("usage")),
+            "interface_number": d.get("interface_number"),
+            "output_report_length": int(out_len) if out_len is not None else None,
+            "input_report_length": int(in_len) if in_len is not None else None,
+            "product_string": sanitize_text(prod_raw),
+            "manufacturer_string": sanitize_text(mfg_raw),
+            "has_serial": has_serial,
+            "path_hash": path_hash,
+        })
+    out.sort(key=lambda item: (item["vid_pid"], str(item["interface_number"]), str(item["usage_page"]), str(item["usage"])))
+    return out
+
+
+def collect_sanitized_ecosystem_hid_descriptors(enumerate_fn=None, caps_probe=None) -> list[dict]:
+    """Read-only HID enumeration of ATK/VXE/VGN ecosystem devices (never opens for I/O)."""
+    try:
+        if enumerate_fn is not None:
+            raw = list(enumerate_fn() or [])
+        else:
+            import hid
+            raw = list(hid.enumerate(0, 0) or [])
+    except Exception:
+        return []
+    if caps_probe is None:
+        try:
+            from protocols.hid_transport import query_hid_caps
+            caps_probe = query_hid_caps
+        except Exception:
+            caps_probe = None
+    return sanitize_hid_descriptors(raw, caps_probe=caps_probe)
+
+
 def export_redacted_diagnostic_zip(
     output_path,
     *,
     rows=None,
     estimates=None,
     device_info=None,
+    hid_descriptors=None,
     extra_notes: str = "",
     extra_secrets=(),
 ) -> Path:
@@ -205,8 +317,17 @@ def export_redacted_diagnostic_zip(
         for sk in ("serial", "serial_number", "raw_serial", "device_path", "path"):
             if device_info.get(sk):
                 collected_secrets.append(str(device_info[sk]))
+    for d in hid_descriptors or ():
+        if isinstance(d, dict):
+            for sk in ("serial_number", "path", "device_path"):
+                val = d.get(sk)
+                if val:
+                    s_val = bytes(val).decode("utf-8", errors="ignore") if isinstance(val, (bytes, bytearray)) else str(val)
+                    if s_val:
+                        collected_secrets.append(s_val)
 
     safe_device = _sanitize_mapping(device_info or {}, extra_secrets=collected_secrets)
+    safe_hid = sanitize_hid_descriptors(hid_descriptors or [])
     manifest = {
         "app_name": APP_NAME,
         "app_version": APP_VERSION,
@@ -214,6 +335,7 @@ def export_redacted_diagnostic_zip(
         "redacted": True,
         "exported_at_local": datetime.now().isoformat(timespec="seconds"),
         "sample_count": len(safe_rows),
+        "hid_descriptor_count": len(safe_hid),
         "device_summary": safe_device,
     }
     csv_text = _rows_to_redacted_csv_text(safe_rows, estimates=estimates)
@@ -222,6 +344,7 @@ def export_redacted_diagnostic_zip(
     with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
         zf.writestr("device_profile_snapshot.json", json.dumps(safe_device, ensure_ascii=False, indent=2))
+        zf.writestr("hid_descriptors_sanitized.json", json.dumps(safe_hid, ensure_ascii=False, indent=2))
         zf.writestr("samples_redacted.csv", csv_text)
         zf.writestr("diagnostic_notes.txt", notes_text + "\n")
     return target

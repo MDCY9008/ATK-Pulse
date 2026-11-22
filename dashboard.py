@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 ATK-Pulse Contributors
-"""ATK-Pulse V0.8.0 — "Iris Greenhouse" (鸢尾温室) Windows dashboard."""
+"""ATK-Pulse V0.8.1 — "Iris Greenhouse" (鸢尾温室) Windows dashboard."""
 from __future__ import annotations
 
 import ctypes
@@ -36,7 +36,10 @@ from data_store import (
     APP_DIR, BINDINGS_PATH, HISTORY_PATH, READ_WARNINGS,
     SAMPLES_PATH, SAMPLES_V2_PATH, V01_HISTORY, read_samples,
 )
-from exporter import export_cycle_csv, export_redacted_diagnostic_zip
+from exporter import (
+    collect_sanitized_ecosystem_hid_descriptors, export_cycle_csv,
+    export_redacted_diagnostic_zip,
+)
 from protocols import BindingStore, DeviceRegistry
 from research import (
     adaptive_sleep_gap_s, analyze, chart_break, compute_cycle_metrics,
@@ -470,9 +473,41 @@ class TrendChart(QWidget):
         p.end()
 
 
+class _WinGUID(ctypes.Structure):
+    _fields_ = [
+        ("Data1", ctypes.c_uint32),
+        ("Data2", ctypes.c_uint16),
+        ("Data3", ctypes.c_uint16),
+        ("Data4", ctypes.c_uint8 * 8),
+    ]
+
+
+class _DEV_BROADCAST_DEVICEINTERFACE_W(ctypes.Structure):
+    _fields_ = [
+        ("dbcc_size", ctypes.c_uint32),
+        ("dbcc_devicetype", ctypes.c_uint32),
+        ("dbcc_reserved", ctypes.c_uint32),
+        ("dbcc_classguid", _WinGUID),
+        ("dbcc_name", ctypes.c_wchar * 1),
+    ]
+
+
+# {4D1E55B2-F16F-11CF-88CB-001111000030} = GUID_DEVINTERFACE_HID
+_GUID_DEVINTERFACE_HID = _WinGUID(
+    0x4D1E55B2,
+    0xF16F,
+    0x11CF,
+    (ctypes.c_uint8 * 8)(0x88, 0xCB, 0x00, 0x11, 0x11, 0x00, 0x00, 0x30),
+)
+_DBT_DEVTYP_DEVICEINTERFACE = 5
+_DEVICE_NOTIFY_WINDOW_HANDLE = 0x00000000
+
+
 class Dashboard(QMainWindow):
     POWER_DEBOUNCE_S = 1.0
     DEVICE_CHANGE_DEBOUNCE_S = 4.0
+    DEVICE_CHANGE_TRAILING_MS = 1200
+    REPLUG_RETRY_DELAYS_MS = (2000, 4000)
 
     def __init__(self, start_worker=True):
         super().__init__()
@@ -490,6 +525,15 @@ class Dashboard(QMainWindow):
         self._last_native_refresh = 0.0
         self._last_power_refresh = -1e9
         self._last_device_change_refresh = -1e9
+        self._dev_notify_handle = None
+        self._replug_retry_idx = 0
+        self._replug_retries_remaining = 0
+        self._device_change_trailing_timer = QTimer(self)
+        self._device_change_trailing_timer.setSingleShot(True)
+        self._device_change_trailing_timer.timeout.connect(self._on_device_change_trailing_timeout)
+        self._replug_retry_timer = QTimer(self)
+        self._replug_retry_timer.setSingleShot(True)
+        self._replug_retry_timer.timeout.connect(self._on_replug_retry_timeout)
         self.estimator = VoltageSocEstimator()
         self.estimators: dict[str, VoltageSocEstimator | None] = {}
         self.registry = DeviceRegistry.load()
@@ -497,6 +541,9 @@ class Dashboard(QMainWindow):
         self.active_device_uid: str | None = None
         self.active_lut_profile_id: str | None = ATK_F1_V2_ULTIMATE_PROFILE.profile_id
         self._pending_collision_event: dict | None = None
+        self._current_display_model: str = "未检测到已适配设备"
+        self._last_known_identity: dict | None = None
+        self._unregistered_ecosystem_vid_pids: list[str] = []
         self._last_estimated_qid = None
         self._last_estimate = None
         self.badge = None
@@ -616,6 +663,7 @@ class Dashboard(QMainWindow):
         self.tick.timeout.connect(self.update_clock)
         self.tick.start(1000)
         self.update_clock()
+        self._register_hid_device_notification()
 
     def _center_on_screen(self):
         screen = QApplication.primaryScreen()
@@ -791,11 +839,11 @@ class Dashboard(QMainWindow):
         title_col = QVBoxLayout()
         title_col.setContentsMargins(0, 0, 0, 0)
         title_col.setSpacing(2)
-        self.card_brand_label = text("ATK", role="cardTitle")
+        self.card_brand_label = text("ATK-Pulse", role="cardTitle")
         self.card_brand_label.setStyleSheet(
             f"color: {qss_rgba(PALETTE['text_primary'])}; font-size: 22px; font-weight: 800; letter-spacing: 0.4px;"
         )
-        self.card_model_label = text(MODEL, role="body", wrap=False)
+        self.card_model_label = text("未检测到已适配设备", role="body", wrap=False)
         self.card_model_label.setStyleSheet(
             f"color: {qss_rgba(PALETTE['text_secondary'])}; font-size: 13px; font-weight: 600;"
         )
@@ -804,7 +852,7 @@ class Dashboard(QMainWindow):
         top_head.addLayout(title_col, 1)
 
         # Strictly single metric pill top-right (metric-only, never duplicated into low-battery warning)
-        self.badge_est_type = PillBadge("● 电压估算", kind="iris")
+        self.badge_est_type = PillBadge("● 固件原报", kind="muted")
         top_head.addWidget(self.badge_est_type, 0, Qt.AlignmentFlag.AlignTop)
         lc_l.addLayout(top_head)
         lc_l.addStretch(1)
@@ -840,7 +888,7 @@ class Dashboard(QMainWindow):
             tl.addWidget(val)
             return tile, tl, val
 
-        tile_link, _, self.slot_link_val = _make_slot("连接方式", "待连接")
+        tile_link, _, self.slot_link_val = _make_slot("连接方式", "未连接")
         tile_cycle, _, self.slot_cycle_val = _make_slot("本周期已用", "样本积累中")
         tile_drain, _, self.slot_drain_val = _make_slot("耗电参考", "样本积累中")
 
@@ -856,7 +904,7 @@ class Dashboard(QMainWindow):
         upd_bot.setSpacing(4)
         self.slot_updated_val = text("暂无更新", role="body", wrap=False)
         self.slot_updated_val.setStyleSheet(f"color: {qss_rgba(PALETTE['text_primary'])}; font-size: 13px; font-weight: 700;")
-        self.slot_state_pill = PillBadge("休眠", kind="muted")
+        self.slot_state_pill = PillBadge("未连接", kind="muted")
         upd_bot.addWidget(self.slot_updated_val, 1)
         upd_bot.addWidget(self.slot_state_pill, 0)
         tu_l.addLayout(upd_bot)
@@ -1170,7 +1218,7 @@ class Dashboard(QMainWindow):
         cp_l = vertical(spacing=10, margins=(18, 14, 18, 14))
         cp_l.addWidget(text("设备档案与维护", role="cardTitle"))
         self.profile_device_label = text(
-            f"当前档案：{MODEL} · VID:PID 373B:11D9 · 协议 nordic52 · tier=verified",
+            "当前档案：未检测到已适配接收器或鼠标",
             role="body",
             wrap=True,
         )
@@ -1293,11 +1341,11 @@ class Dashboard(QMainWindow):
         if event:
             uid = event.get("device_uid") or event.get("device_id")
             if uid and uid not in seen_uids and uid not in ("__default__",):
-                name = event.get("model_display_name") or event.get("name") or MODEL
+                name = event.get("model_display_name") or event.get("name") or "未检测到已适配设备"
                 self.device_selector.addItem(name, uid)
                 seen_uids.add(uid)
         if self.device_selector.count() == 0:
-            self.device_selector.addItem(MODEL, "__default__")
+            self.device_selector.addItem("未检测到已适配设备", "__default__")
         if self.active_device_uid:
             idx = self.device_selector.findData(self.active_device_uid)
             if idx >= 0:
@@ -1371,7 +1419,10 @@ class Dashboard(QMainWindow):
 
     def _prompt_reselect_model(self):
         ev = self._pending_collision_event or self.last_reading
-        vid_pid = (ev.get("vid_pid") if ev else None) or "373B:11D9"
+        vid_pid = ev.get("vid_pid") if ev else None
+        if not vid_pid:
+            QMessageBox.information(self, "当前设备档案", "当前尚未检测到已适配设备。")
+            return
         rec = self.registry.receivers.get(vid_pid.upper())
         candidates = self.registry.candidate_models_for(rec) if rec is not None else ()
         if not candidates:
@@ -1558,6 +1609,26 @@ class Dashboard(QMainWindow):
             "cancelled": "查询已取消",
         }
         outcome = event["outcome"]
+        if event["connected"]:
+            self._replug_retries_remaining = 0
+            self._replug_retry_idx = 0
+            self._replug_retry_timer.stop()
+        elif outcome == "receiver_absent":
+            if (
+                self._replug_retries_remaining > 0
+                and not self._closing
+                and getattr(self, "worker", None)
+            ):
+                delay_ms = self.REPLUG_RETRY_DELAYS_MS[
+                    min(self._replug_retry_idx, len(self.REPLUG_RETRY_DELAYS_MS) - 1)
+                ]
+                self._replug_retry_idx += 1
+                self._replug_retries_remaining -= 1
+                self._replug_retry_timer.start(delay_ms)
+        elif outcome not in ("cancelled", "device_changed"):
+            self._replug_retries_remaining = 0
+            self._replug_retry_idx = 0
+            self._replug_retry_timer.stop()
         mode = "手动" if event.get("manual") else "自动"
         if matching_manual or not self.manual_pending:
             detail = "取得有效回复" if event["connected"] else reasons.get(outcome, f"响应不可用：{outcome}")
@@ -1586,44 +1657,135 @@ class Dashboard(QMainWindow):
         self.status_right.setText(STATUS_RIGHT_TEXT)
         self._sync_statusbar_tooltip()
 
+        last = event.get("last_success")
+        is_disconnected_cached = (
+            (not event["connected"])
+            and (last is not None)
+            and (not event.get("vid_pid"))
+        )
+
         # Resolve per-device LUT binding state (keeps synthetic test events 100% compatible)
-        dev_uid = event.get("device_uid") or event.get("device_id") or "__default__"
+        if is_disconnected_cached:
+            dev_uid = last.get("device_uid") or last.get("device_id") or self.active_device_uid or "__default__"
+        else:
+            dev_uid = event.get("device_uid") or event.get("device_id") or "__default__"
         self.active_device_uid = dev_uid
         binding_state = event.get("binding_state", "unknown")
-        has_v07_fields = ("lut_profile_id" in event) or (
-            binding_state in ("bound", "single_candidate", "ambiguous_unbound", "pending_protocol")
+        has_v07_fields = (
+            ("lut_profile_id" in event)
+            or (binding_state in ("bound", "single_candidate", "ambiguous_unbound", "pending_protocol", "cid_mid_resolved"))
+            or ("vid_pid" in event)
+            or ("unregistered_ecosystem_vid_pids" in event)
         )
-        lut_pid = event.get("lut_profile_id") if has_v07_fields else ATK_F1_V2_ULTIMATE_PROFILE.profile_id
+        if is_disconnected_cached:
+            lut_pid = last.get("lut_profile_id")
+            if not lut_pid and self._last_known_identity is not None:
+                lut_pid = self._last_known_identity.get("lut_id")
+            if not lut_pid and last.get("model_id"):
+                cached_model = self.registry.get_model(last["model_id"])
+                if cached_model is not None and (
+                    last.get("binding_state") in ("bound", "single_candidate", "cid_mid_resolved")
+                    or cached_model.lut_profile_id == ATK_F1_V2_ULTIMATE_PROFILE.profile_id
+                ):
+                    lut_pid = cached_model.lut_profile_id
+            if not lut_pid and not has_v07_fields:
+                lut_pid = ATK_F1_V2_ULTIMATE_PROFILE.profile_id
+        else:
+            lut_pid = event.get("lut_profile_id") if has_v07_fields else ATK_F1_V2_ULTIMATE_PROFILE.profile_id
         self.active_lut_profile_id = lut_pid
         self._update_collision_banner(event)
         self._refresh_device_selector(event)
 
-        brand = event.get("brand") or "ATK"
-        display_model = event.get("model_display_name") or event.get("name") or MODEL
-        self._apply_card_identity(
-            brand=brand,
-            model_name=display_model,
-            vid_pid=event.get("vid_pid") or "373B:11D9",
-            protocol_family=event.get("protocol_family") or "nordic52",
-            tier=event.get("verification_tier") or "verified",
-            lut_id=lut_pid,
+        unreg = list(event.get("unregistered_ecosystem_vid_pids") or [])
+        self._unregistered_ecosystem_vid_pids = unreg
+        is_unmatched_no_history = (
+            (not event["connected"])
+            and (last is None)
+            and (event.get("receiver_visibility") == "absent")
+            and (event.get("vid_pid") is None)
         )
 
-        # Compat device status indicators
-        if event["connected"]:
-            self.state_dot.setStyleSheet(f"color: {qss_rgba(PALETTE['iris_primary'])}; font-size: 11px;")
-            self.state_chip.setText(display_model)
-            self.state_chip.setToolTip("最近查询有效")
-        else:
-            vis_text = {
-                "present": f"{display_model} · 暂未响应",
-                "absent": "未发现已登记接收器",
-            }.get(event["receiver_visibility"], "接收器状态未知")
+        if is_unmatched_no_history:
+            if unreg:
+                brand = "ATK 生态"
+                display_model = f"未收录 {unreg[0]} · 请导诊断包"
+                self.profile_device_label.setText(
+                    f"检测到未收录 ATK/VXE/VGN 设备：{', '.join(unreg)} · 请点击下方「导出诊断包」反馈适配"
+                )
+            else:
+                brand = "ATK-Pulse"
+                display_model = "未检测到已适配设备"
+                self.profile_device_label.setText("当前档案：未检测到已适配接收器或鼠标")
+            self._current_display_model = display_model
+            self.card_brand_label.setText(brand)
+            self.card_model_label.setText(display_model)
             self.state_dot.setStyleSheet(f"color: {qss_rgba(PALETTE['coral_low'])}; font-size: 11px;")
-            self.state_chip.setText(vis_text)
+            self.state_chip.setText("未发现已登记接收器")
             self.state_chip.setToolTip(self.refresh_status.text())
+        else:
+            if event.get("vid_pid"):
+                brand = event.get("brand") or "ATK"
+                display_model = event.get("model_display_name") or event.get("name") or "ATK Wireless Mouse"
+                ident = dict(
+                    brand=brand,
+                    model_name=display_model,
+                    vid_pid=event.get("vid_pid"),
+                    protocol_family=event.get("protocol_family") or "unknown",
+                    tier=event.get("verification_tier") or "catalog_only",
+                    lut_id=lut_pid,
+                )
+                if event["connected"] or last is not None:
+                    self._last_known_identity = ident
+            elif (not event["connected"]) and self._last_known_identity is not None:
+                ident = dict(self._last_known_identity)
+                brand = ident["brand"]
+                display_model = ident["model_name"]
+            elif is_disconnected_cached and (
+                last.get("vid_pid") or last.get("model_display_name") or last.get("model_id")
+            ):
+                cached_model = self.registry.get_model(last["model_id"]) if last.get("model_id") else None
+                brand = (cached_model.brand if cached_model else None) or "ATK"
+                display_model = (
+                    last.get("model_display_name")
+                    or (cached_model.display_name if cached_model else None)
+                    or "ATK Wireless Mouse"
+                )
+                ident = dict(
+                    brand=brand,
+                    model_name=display_model,
+                    vid_pid=last.get("vid_pid") or (cached_model.vid_pid if cached_model else "unknown"),
+                    protocol_family=last.get("protocol_family") or (cached_model.protocol_family if cached_model else "unknown"),
+                    tier=(cached_model.verification_tier if cached_model else "catalog_only"),
+                    lut_id=lut_pid,
+                )
+            else:
+                brand = event.get("brand") or "ATK"
+                display_model = event.get("model_display_name") or event.get("name") or MODEL
+                ident = dict(
+                    brand=brand,
+                    model_name=display_model,
+                    vid_pid=event.get("vid_pid") or "373B:11D9",
+                    protocol_family=event.get("protocol_family") or "nordic52",
+                    tier=event.get("verification_tier") or "verified",
+                    lut_id=lut_pid,
+                )
+            self._current_display_model = display_model
+            self._apply_card_identity(**ident)
 
-        last = event.get("last_success")
+            # Compat device status indicators
+            if event["connected"]:
+                self.state_dot.setStyleSheet(f"color: {qss_rgba(PALETTE['iris_primary'])}; font-size: 11px;")
+                self.state_chip.setText(display_model)
+                self.state_chip.setToolTip("最近查询有效")
+            else:
+                vis_text = {
+                    "present": f"{display_model} · 暂未响应",
+                    "absent": "未发现已登记接收器",
+                }.get(event["receiver_visibility"], "接收器状态未知")
+                self.state_dot.setStyleSheet(f"color: {qss_rgba(PALETTE['coral_low'])}; font-size: 11px;")
+                self.state_chip.setText(vis_text)
+                self.state_chip.setToolTip(self.refresh_status.text())
+
         pct, mv = (last["percent"], last["voltage_mv"]) if last else (None, None)
         est_obj = self._get_or_create_estimator(dev_uid, lut_pid)
         if est_obj is None:
@@ -1643,7 +1805,18 @@ class Dashboard(QMainWindow):
             est = self._last_estimate
 
         display_pct = est.percent_est if (est is not None and est.percent_est is not None) else pct
-        if est is not None and est.percent_est is not None:
+        if is_unmatched_no_history:
+            self.main_pct_title.setText("未收录 ATK 生态设备" if unreg else "未检测到已适配设备")
+            self.badge_est_type.setText("● 固件原报")
+            self.badge_est_type.apply_kind("muted")
+            self.badge_low_extrap.hide()
+            self.main_pct_sub.setText(
+                f"检测到 {', '.join(unreg)}，请到设置页导出离线诊断包"
+                if unreg
+                else "请插入已适配的 ATK / VXE / VGN 接收器或有线鼠标"
+            )
+            self.main_pct_caption.setText("待适配反馈" if unreg else "等待设备连接")
+        elif est is not None and est.percent_est is not None:
             self.main_pct_title.setText("电压估算电量 · 低段外推" if est.extrapolated_low else "电压估算电量")
             # Metric-only pill: MUST NOT turn into a low-battery warning pill
             self.badge_est_type.setText("● 电压估算")
@@ -1676,12 +1849,12 @@ class Dashboard(QMainWindow):
             self.main_pct_sub.setText("缺少候选电压，回退显示固件原报百分比")
             self.main_pct_caption.setText("缺少候选电压 · 回退固件原报")
         else:
-            self.main_pct_title.setText("电压估算电量")
-            self.badge_est_type.setText("● 电压估算")
-            self.badge_est_type.apply_kind("iris")
+            self.main_pct_title.setText("固件原报电量" if not lut_pid else "电压估算电量")
+            self.badge_est_type.setText("● 固件原报" if not lut_pid else "● 电压估算")
+            self.badge_est_type.apply_kind("muted" if not lut_pid else "iris")
             self.badge_low_extrap.hide()
-            self.main_pct_sub.setText("基于 ADC 电压 1% 估算 · 等待读数")
-            self.main_pct_caption.setText("ADC 1% 标定曲线 · 等待读数")
+            self.main_pct_sub.setText("等待设备首次读取" if not lut_pid else "基于 ADC 电压 1% 估算 · 等待读数")
+            self.main_pct_caption.setText("等待设备读数" if not lut_pid else "ADC 1% 标定曲线 · 等待读数")
 
         self.main_pct.setText(f"{display_pct}%" if display_pct is not None else "--")
         self.main_voltage.setText(f"{mv / 1000:.3f} V" if mv is not None else "--")
@@ -1702,7 +1875,14 @@ class Dashboard(QMainWindow):
             self.main_voltage_sub.setText("等待有效电压")
 
         # Update left-card V0.8 ring + 2x2 natural-language slots
-        ring_sub = "低段外推" if (est and est.extrapolated_low) else ("固件原报" if (est is None and pct is not None) else "")
+        if is_unmatched_no_history and unreg:
+            ring_sub = "未收录设备"
+        elif est and est.extrapolated_low:
+            ring_sub = "低段外推"
+        elif est is None and pct is not None:
+            ring_sub = "固件原报"
+        else:
+            ring_sub = ""
         self.ring_widget.set_state(
             display_pct,
             mv,
@@ -1721,8 +1901,11 @@ class Dashboard(QMainWindow):
         else:
             self.slot_link_val.setText("待确认")
 
-        if not event["connected"]:
-            self.slot_state_pill.setText("休眠")
+        if is_unmatched_no_history:
+            self.slot_state_pill.setText("未适配" if unreg else "未连接")
+            self.slot_state_pill.apply_kind("coral" if unreg else "muted")
+        elif not event["connected"]:
+            self.slot_state_pill.setText("未连接" if event.get("receiver_visibility") == "absent" else "休眠")
             self.slot_state_pill.apply_kind("muted")
         elif display_pct is not None and display_pct <= self.threshold.value():
             self.slot_state_pill.setText("低电")
@@ -1945,8 +2128,16 @@ class Dashboard(QMainWindow):
             self.main_last.setText("暂无读数")
             if hasattr(self, "slot_updated_val"):
                 self.slot_updated_val.setText("暂无更新")
+            if self._unregistered_ecosystem_vid_pids:
+                tip = (
+                    f"{APP_NAME} · 检测到未收录设备 "
+                    f"{', '.join(self._unregistered_ecosystem_vid_pids)}（可导出离线诊断包反馈）"
+                )
+            else:
+                tip = f"{APP_NAME} · 未检测到已适配设备"
+            self.tray.setToolTip(tip)
             if getattr(self, "badge", None) is not None:
-                self.badge.set_tooltip(f"{MODEL} · 等待首次读取")
+                self.badge.set_tooltip(tip)
             return
         at = last["at"]
         age = max(0, int((datetime.now().astimezone() - at).total_seconds()))
@@ -1970,14 +2161,36 @@ class Dashboard(QMainWindow):
         else:
             head = f"设备报告 {fw_pct}%"
         mv_str = f"{mv / 1000:.3f} V ({mv} mV)" if mv is not None else "—"
+        model_title = self._current_display_model or MODEL
         tip = (
-            f"{MODEL} · {head}\n"
+            f"{model_title} · {head}\n"
             f"原始电压 {mv_str} · 固件原报 {fw_pct}%\n"
             f"接收时间 {at.strftime('%m/%d %H:%M:%S')} · 距今 {age} 秒 · {state}；充电状态 unknown"
         )
         self.tray.setToolTip(tip)
         if getattr(self, "badge", None) is not None:
             self.badge.set_tooltip(tip)
+
+    def _arm_replug_retries(self):
+        self._replug_retry_idx = 0
+        self._replug_retries_remaining = len(self.REPLUG_RETRY_DELAYS_MS)
+        self._replug_retry_timer.stop()
+
+    def _on_device_change_trailing_timeout(self, now: float | None = None):
+        if self._closing or not getattr(self, "worker", None):
+            return
+        now = time.monotonic() if now is None else now
+        self._last_device_change_refresh = now
+        self._last_native_refresh = now
+        self._arm_replug_retries()
+        log.info("Trailing Win32 device change debounce fired; resuming worker")
+        self.worker.resume()
+
+    def _on_replug_retry_timeout(self):
+        if self._closing or not getattr(self, "worker", None):
+            return
+        log.info("Bounded replug retry firing; resuming worker")
+        self.worker.resume()
 
     def handle_native_event(self, msg_id: int, wparam: int, now: float | None = None) -> bool:
         resume = msg_id == 0x0218 and int(wparam) in (6, 7, 18)
@@ -1987,8 +2200,11 @@ class Dashboard(QMainWindow):
         now = time.monotonic() if now is None else now
         if device_change:
             if now - self._last_device_change_refresh <= self.DEVICE_CHANGE_DEBOUNCE_S:
+                self._device_change_trailing_timer.start(self.DEVICE_CHANGE_TRAILING_MS)
                 return False
+            self._device_change_trailing_timer.stop()
             self._last_device_change_refresh = now
+            self._arm_replug_retries()
         elif resume:
             if now - self._last_power_refresh <= self.POWER_DEBOUNCE_S:
                 return False
@@ -2113,20 +2329,27 @@ class Dashboard(QMainWindow):
         if not target:
             return
         ev = dict(self.last_reading or {})
+        has_matched_dev = bool(ev.get("vid_pid"))
         dev_info = {
-            "device_uid": self.active_device_uid or ev.get("device_uid") or "",
-            "vid_pid": ev.get("vid_pid") or "373B:11D9",
-            "model_id": ev.get("model_id") or "atk_f1_v2_ultimate",
-            "protocol_family": ev.get("protocol_family") or "nordic52",
-            "verification_tier": ev.get("verification_tier") or "verified",
-            "lut_profile_id": self.active_lut_profile_id or "",
+            "device_uid": self.active_device_uid if self.active_device_uid not in (None, "__default__") else (ev.get("device_uid") or None),
+            "vid_pid": ev.get("vid_pid") or None,
+            "model_id": ev.get("model_id") or None,
+            "model_display_name": ev.get("model_display_name") or self._current_display_model,
+            "protocol_family": ev.get("protocol_family") or None,
+            "verification_tier": ev.get("verification_tier") or None,
+            "lut_profile_id": (self.active_lut_profile_id or "") if has_matched_dev else None,
             "binding_state": ev.get("binding_state") or "unknown",
+            "outcome": ev.get("outcome") or "none",
+            "receiver_visibility": ev.get("receiver_visibility") or "unknown",
+            "unregistered_ecosystem_vid_pids": list(ev.get("unregistered_ecosystem_vid_pids") or self._unregistered_ecosystem_vid_pids),
         }
+        hid_descs = collect_sanitized_ecosystem_hid_descriptors()
         try:
             export_redacted_diagnostic_zip(
                 target,
                 rows=enriched,
                 device_info=dev_info,
+                hid_descriptors=hid_descs,
                 extra_notes=f"refresh_status={self.refresh_status.text()}\nstorage_status={self.storage_status.text()}",
             )
             QMessageBox.information(self, "导出完成", f"已生成 100% 离线脱敏诊断包（无用户名/本机路径/序列号）：\n{target}")
@@ -2172,7 +2395,69 @@ class Dashboard(QMainWindow):
         if getattr(self, "badge", None) is not None:
             QTimer.singleShot(120, self.badge.ensure_on_top)
 
+    def _stop_replug_timers(self):
+        for attr in ("_device_change_trailing_timer", "_replug_retry_timer"):
+            timer = getattr(self, attr, None)
+            if timer is not None:
+                timer.stop()
+        self._replug_retries_remaining = 0
+        self._replug_retry_idx = 0
+
+    def _register_hid_device_notification(self) -> bool:
+        if sys.platform != "win32" or getattr(self, "_dev_notify_handle", None):
+            return bool(getattr(self, "_dev_notify_handle", None))
+        app = QApplication.instance()
+        if app is None or app.platformName() != "windows":
+            return False
+        try:
+            hwnd = int(self.winId())
+            if not hwnd:
+                return False
+            flt = _DEV_BROADCAST_DEVICEINTERFACE_W()
+            flt.dbcc_size = ctypes.sizeof(_DEV_BROADCAST_DEVICEINTERFACE_W)
+            flt.dbcc_devicetype = _DBT_DEVTYP_DEVICEINTERFACE
+            flt.dbcc_reserved = 0
+            flt.dbcc_classguid = _GUID_DEVINTERFACE_HID
+            user32 = ctypes.WinDLL("user32", use_last_error=True)
+            user32.RegisterDeviceNotificationW.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_void_p,
+                ctypes.c_uint32,
+            ]
+            user32.RegisterDeviceNotificationW.restype = ctypes.c_void_p
+            handle = user32.RegisterDeviceNotificationW(
+                ctypes.c_void_p(hwnd),
+                ctypes.byref(flt),
+                _DEVICE_NOTIFY_WINDOW_HANDLE,
+            )
+            if handle:
+                self._dev_notify_handle = int(handle)
+                log.info("Registered Win32 HID device notification handle=%#x", self._dev_notify_handle)
+                return True
+            err = ctypes.get_last_error()
+            log.warning("RegisterDeviceNotificationW returned NULL (last_error=%s)", err)
+        except Exception:
+            log.warning("Failed to register HID device notification", exc_info=True)
+        return False
+
+    def _unregister_hid_device_notification(self) -> None:
+        handle = getattr(self, "_dev_notify_handle", None)
+        if not handle or sys.platform != "win32":
+            self._dev_notify_handle = None
+            return
+        try:
+            user32 = ctypes.WinDLL("user32", use_last_error=True)
+            user32.UnregisterDeviceNotification.argtypes = [ctypes.c_void_p]
+            user32.UnregisterDeviceNotification.restype = ctypes.c_int
+            user32.UnregisterDeviceNotification(ctypes.c_void_p(handle))
+        except Exception:
+            log.warning("UnregisterDeviceNotification failed", exc_info=True)
+        finally:
+            self._dev_notify_handle = None
+
     def _cleanup_badge(self):
+        self._stop_replug_timers()
+        self._unregister_hid_device_notification()
         if getattr(self, "badge", None) is not None:
             self.badge.destroy()
 

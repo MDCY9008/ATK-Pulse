@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from .codecs import NanoFf05Codec, Nordic52Codec, Nordic54Codec, ProtocolCodec, get_codec
-from .hid_transport import HidTransport, matches_hid_rule
+from .hid_transport import HidTransport, matches_hid_rule, query_hid_caps
 from .registry import BindingStore, DeviceRegistry, make_device_uid, resolve_binding
 from .types import (
     CHARGING_STATE_UNKNOWN,
@@ -38,5 +38,6 @@ __all__ = [
     "get_codec",
     "make_device_uid",
     "matches_hid_rule",
+    "query_hid_caps",
     "resolve_binding",
 ]

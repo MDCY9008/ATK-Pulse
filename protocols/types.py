@@ -17,6 +17,8 @@ class HidMatchRule:
     usage_page: int | None = None
     usage: int | None = None
     interface_number: int | None = None
+    output_report_length: int | None = None
+    input_report_length: int | None = None
 
 
 @dataclass(frozen=True)
