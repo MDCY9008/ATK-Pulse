@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 ATK-Pulse Contributors
-"""ATK-Pulse V0.8.3 — "Iris Greenhouse" (鸢尾温室) Windows dashboard."""
+"""ATK-Pulse — "Iris Greenhouse" (鸢尾温室) Windows dashboard."""
 from __future__ import annotations
 
 import ctypes
@@ -1860,11 +1860,11 @@ class Dashboard(QMainWindow):
             if event["connected"]:
                 self._last_estimated_qid = event.get("query_id")
         elif event["connected"]:
-            est = est_obj.step(mv, link_byte=event.get("link_byte"))
+            est = est_obj.step(mv, link_byte=event.get("link_byte"), percent_reported=pct)
             self._last_estimate = est
             self._last_estimated_qid = event.get("query_id")
         elif self._last_estimate is None and last is not None:
-            est = est_obj.step(mv, link_byte=last.get("link_byte"))
+            est = est_obj.step(mv, link_byte=last.get("link_byte"), percent_reported=pct)
             self._last_estimate = est
             self._last_estimated_qid = last.get("query_id")
         else:

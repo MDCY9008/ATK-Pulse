@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 ATK-Pulse Contributors
-"""Windows entrypoint for ATK-Pulse V0.8.3."""
+"""Windows entrypoint for ATK-Pulse."""
 from dashboard import main
 
 if __name__ == '__main__':

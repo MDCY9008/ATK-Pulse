@@ -1,6 +1,6 @@
 # ATK-Pulse
 
-**ATK / VXE / VGN 离线鼠标电量与电压监测工具（V0.8.3 · 鸢尾温室 UI）**  
+**ATK / VXE / VGN 离线鼠标电量与电压监测工具（V0.8.4 · 鸢尾温室 UI）**
 **作者**：[Liebe Kiana (@liaman-li)](https://github.com/liaman-li/ATK-Pulse)
 
 > **永久免费开源，谨防倒卖。**  
@@ -36,6 +36,7 @@
 4. **1% 精细电压估算与全系生态只读架构**
    - **已标定机型 1% 估算**：基于 Cycle 1 实测标定的 15 点分段 LUT + 压降门控滤波 + 无线单调防抖（`ATK F1 V2 Ultimate`）；**未实机标定机型保守显示固件原报并在后台静默记录原始电压**（仅记录含真实电压字段的 `CompX` 协议，`BITMOUSE (nordic54)` 与 `EVISION Nearlink` 64B 协议无电压字段，电压保持 `None`）。
    - **全系生态扩容与安全守卫**：设备白名单已扩展至 **292 条**（覆盖 **ATK / VXE / MAD / VGN** 生态 **160+ 款**鼠标，包含 `CompX` 17B、`BITMOUSE (nordic54)` 64B 与 **EVISION Nearlink 星闪** 64B 协议族，已适配 ATK X1 星闪版无线 `373B:108C` / 有线 `373B:108B`），强制执行 Win32 `HidP_GetCaps` 17B/64B 报告长度只读守卫；`CompX` 通用接收器支持只读 `0x10`、`BITMOUSE` 无线接收器支持只读 `0x4A`（`CID,MID`）自动识别具体型号（如 `ATK Ghost Ultimate` / `ATK Z1 Ultimate 2.0` / `X1` / `A9` / `U2` / `VXE R1` / `MAD` 等）。
+   - **F1 V2 Ultimate 的 100% 显示**。固件报 100%，且当前电压和滤波电压均达到 4.300 V 时，电压估算显示 100%。门限比本次充满记录中固件报满的最低电压低 13 mV，给读数波动留出余量。其余有效电压样本按放电曲线估算，最高显示 99%。
    - 严守工程诚信：`charging_state` 始终保持 `unknown`（绝不将无线连接字节臆断为充电中）；`battery_samples.v1.csv` 与早期 CSV **严格只读**，新采样写入 `battery_samples.v2.csv`。
    - 未命中设备时不再占位硬编码 F1 V2，离线诊断包新增脱敏 `hid_descriptors_sanitized.json` 以便社区补充新 PID 适配。
 
@@ -54,7 +55,7 @@
 ## 快速运行（Windows 10 / 11）
 
 ### 方式 A · 普通玩家推荐（Releases 绿色免安装版）
-1. 前往本仓库 [GitHub Releases](https://github.com/liaman-li/ATK-Pulse/releases) 下载 `ATK-Pulse-V0.8.3-win64.zip`。
+1. 前往本仓库 [GitHub Releases](https://github.com/liaman-li/ATK-Pulse/releases) 下载对应版本的 Windows 便携包。
 2. 解压至任意本地目录（勿放在受系统权限保护的目录），双击 `ATK-Pulse\ATK-Pulse.exe` 即可直接运行（无需配置 Python 环境，无黑框命令行弹窗）。
    > **提示**：本工具为个人免费开源构建、未购买商业数字签名证书，首次运行若弹出 Windows SmartScreen 蓝色拦截框，点击「**更多信息 → 仍要运行**」即可。
 

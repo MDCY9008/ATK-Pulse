@@ -559,6 +559,47 @@ class ResearchAndUiTests(unittest.TestCase):
             self.assertTrue(window.refresh_button.isEnabled())
 
 class VoltageSocTests(unittest.TestCase):
+    def test_full_endpoint_live_and_history(self):
+        from voltage_soc import ATK_F1_V2_ULTIMATE_PROFILE, create_estimator, estimate_series
+        profile_id = ATK_F1_V2_ULTIMATE_PROFILE.profile_id
+        samples = [
+            (4308, 95, 1), (4340, 95, 1), (4358, 95, 1),
+            (4317, 100, 0), (4313, 100, 0),
+            (4276, 95, 0), (4276, 95, 0),
+        ]
+        rows = [dict(mv=mv, percent=pct, link_byte=link) for mv, pct, link in samples]
+        history, _ = estimate_series(rows, lut_profile_id=profile_id)
+        expected = [96, 99, 99, 100, 100, 97, 92]
+        self.assertEqual([r["display_percent"] for r in history], expected)
+        live = create_estimator(profile_id)
+        results = [live.step(mv, percent_reported=pct, link_byte=link) for mv, pct, link in samples]
+        self.assertEqual([s.percent_est for s in results], expected)
+        self.assertTrue(results[3].sag_pending)
+        self.assertTrue(results[5].sag_pending)
+        # Firmware alone cannot promote a lower voltage, including a pending sag.
+        fresh = create_estimator(profile_id)
+        self.assertEqual(fresh.step(4299, percent_reported=100).percent_est, 95)
+        self.assertEqual(fresh.step(4358, percent_reported=95).percent_est, 99)
+        self.assertEqual(fresh.step(4276, percent_reported=100).percent_est, 99)
+        self.assertIsNone(fresh.step(None, percent_reported=100).percent_est)
+        # Uncalibrated devices retain their firmware gauge even with high voltage.
+        uncalibrated, _ = estimate_series(rows, lut_profile_id=None)
+        self.assertEqual([r["display_percent"] for r in uncalibrated], [r["percent"] for r in rows])
+
+    def test_full_endpoint_voltage_margin(self):
+        from voltage_soc import ATK_F1_V2_ULTIMATE_PROFILE, create_estimator, estimate_series
+        profile_id = ATK_F1_V2_ULTIMATE_PROFILE.profile_id
+        for mv, reported, expected in [(4308, 100, 100), (4308, 95, 96), (4300, 100, 100), (4299, 100, 95)]:
+            with self.subTest(mv=mv, reported=reported):
+                live = create_estimator(profile_id)
+                self.assertEqual(live.step(mv, percent_reported=reported).percent_est, expected)
+                history, _ = estimate_series([dict(mv=mv, percent=reported)], lut_profile_id=profile_id)
+                self.assertEqual(history[0]["display_percent"], expected)
+        # A small rebound above the threshold still needs the filtered voltage to qualify.
+        live = create_estimator(profile_id)
+        live.step(4299, percent_reported=100)
+        self.assertEqual(live.step(4308, percent_reported=100).percent_est, 95)
+
     def test_lut_boundaries_and_interpolation(self):
         from voltage_soc import lut_mv_to_soc, LOW_EXTRAPOLATION_MV
         self.assertEqual(lut_mv_to_soc(4400),100.0)
@@ -1125,7 +1166,8 @@ class CleanRoomAndMultiDeviceV07Tests(unittest.TestCase):
         baseline_est=VoltageSocEstimator()
         baseline=[baseline_est.step(r['mv'], link_byte=r['link_byte']) for r in rows]
         enriched, _ = estimate_series(rows, lut_profile_id=ATK_F1_V2_ULTIMATE_PROFILE.profile_id)
-        self.assertEqual([r['percent_est'] for r in enriched], [b.percent_est for b in baseline])
+        # Only the uncorroborated full readings change; voltage and gating stay identical.
+        self.assertEqual([r['percent_est'] for r in enriched], [min(99, b.percent_est) for b in baseline])
         self.assertEqual([r['v_est_mv'] for r in enriched], [b.v_est_mv for b in baseline])
         self.assertEqual([r['sag_pending'] for r in enriched], [b.sag_pending for b in baseline])
         self.assertEqual([r['extrapolated_low'] for r in enriched], [b.extrapolated_low for b in baseline])

@@ -1,4 +1,4 @@
-ATK-Pulse V0.8.3 by Liebe Kiana (@liaman-li)（永久免费开源，谨防倒卖）
+ATK-Pulse V0.8.4 by Liebe Kiana (@liaman-li)（永久免费开源，谨防倒卖）
 
 启动：
 - 绿色正式版：解压发布包后双击 ATK-Pulse\ATK-Pulse.exe 即可直接启动，无黑框弹窗（本软件无商业数字签名，首次运行若弹出 Windows SmartScreen 蓝框，点击“更多信息 -> 仍要运行”即可）。

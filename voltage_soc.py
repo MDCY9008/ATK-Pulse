@@ -45,6 +45,7 @@ class LutProfile:
     sag_rebound_tol_mv: int = 15
     fast_unlock_mv: int = 25
     sustain_rise_mv: int = 15
+    full_report_min_mv: int | None = None
 
 
 ATK_F1_V2_ULTIMATE_PROFILE = LutProfile(
@@ -52,6 +53,8 @@ ATK_F1_V2_ULTIMATE_PROFILE = LutProfile(
     model_id="atk_f1_v2_ultimate",
     anchors=LUT_ANCHORS,
     low_extrapolation_mv=LOW_EXTRAPOLATION_MV,
+    # Allow 13 mV below the lowest observed full report, at the 95% discharge anchor.
+    full_report_min_mv=4300,
 )
 
 LUT_PROFILES: dict[str, LutProfile] = {
@@ -105,6 +108,7 @@ class VoltageSocEstimator:
         sustain_rise_mv: int = 15,
         anchors: tuple[tuple[int, int], ...] = LUT_ANCHORS,
         low_extrapolation_mv: int | None = LOW_EXTRAPOLATION_MV,
+        full_report_min_mv: int | None = None,
     ) -> None:
         self.sag_gate_mv = sag_gate_mv
         self.sag_rebound_tol_mv = sag_rebound_tol_mv
@@ -112,6 +116,7 @@ class VoltageSocEstimator:
         self.sustain_rise_mv = sustain_rise_mv
         self.anchors = anchors
         self.low_extrapolation_mv = low_extrapolation_mv
+        self.full_report_min_mv = full_report_min_mv
         self.v_est: float | None = None
         self.pending_sag: float | None = None
         self.rise_streak: int = 0
@@ -121,6 +126,7 @@ class VoltageSocEstimator:
         voltage_mv: int | float | None,
         *,
         link_byte: int | None = None,
+        percent_reported: int | None = None,
     ) -> SocEstimate:
         """Advance state machine by one sample; missing voltage gracefully falls back."""
         if voltage_mv is None:
@@ -166,6 +172,13 @@ class VoltageSocEstimator:
                 self.v_est = v
 
         pct = max(0, min(100, round(lut_mv_to_soc(self.v_est, self.anchors))))
+        # Qualify the display endpoint only. Keep the voltage filter independent
+        # of the coarse firmware gauge so the next sample replays identically.
+        if self.full_report_min_mv is not None and percent_reported is not None:
+            if percent_reported == 100 and min(v, self.v_est) >= self.full_report_min_mv:
+                pct = 100
+            else:
+                pct = min(pct, 99)
         extrap_low = (
             self.low_extrapolation_mv is not None
             and self.v_est < self.low_extrapolation_mv
@@ -191,6 +204,7 @@ def create_estimator(profile_id: str | None) -> VoltageSocEstimator | None:
         sustain_rise_mv=profile.sustain_rise_mv,
         anchors=profile.anchors,
         low_extrapolation_mv=profile.low_extrapolation_mv,
+        full_report_min_mv=profile.full_report_min_mv,
     )
 
 
@@ -224,7 +238,7 @@ def estimate_series(
             out["fallback_used"] = True
             out["battery_source_mode"] = "firmware_reported"
         else:
-            res = est.step(row.get("mv"), link_byte=row.get("link_byte"))
+            res = est.step(row.get("mv"), link_byte=row.get("link_byte"), percent_reported=row["percent"])
             out["percent_est"] = res.percent_est
             out["display_percent"] = res.percent_est if res.percent_est is not None else row["percent"]
             out["v_est_mv"] = res.v_est_mv
