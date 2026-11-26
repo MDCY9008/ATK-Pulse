@@ -255,6 +255,7 @@ class HidTransport:
         drain_timeout_ms: int = 30,
         response_matcher: Callable[[list[int]], bool] | None = None,
         max_skipped_frames: int = 16,
+        feature_request: bool = False,
     ) -> tuple[list[int] | None, str | None]:
         """Send one interrupt report and read one response within bounded timeout slices.
 
@@ -286,7 +287,8 @@ class HidTransport:
             phase = "write"
             req_list = list(request)
             log.debug("query=%s HID write path_hash=%s len=%s", query_id, hash(path), len(req_list))
-            written = dev.write(req_list)
+            send = dev.send_feature_report if feature_request else dev.write
+            written = send(req_list)
             if written != len(req_list):
                 return None, "short_write"
 

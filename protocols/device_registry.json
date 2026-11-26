@@ -6,6 +6,16 @@
     "VGN"
   ],
   "protocol_families": {
+    "holtek_nano8k": {
+      "protocol_status": "ready",
+      "hid_match": {
+        "usage_page": "0xFF10",
+        "usage": "0x0001",
+        "interface_number": 2,
+        "output_report_length": 65,
+        "input_report_length": 65
+      }
+    },
     "nordic52": {
       "protocol_status": "ready",
       "hid_match": {
@@ -80,6 +90,22 @@
     "373B:215E"
   ],
   "receivers": {
+    "373B:112D": {
+      "vid": "0x373B",
+      "pid": "0x112D",
+      "link_role": "wired_usb",
+      "protocol_family": "holtek_nano8k",
+      "candidate_model_ids": ["atk_a9_pro"],
+      "shared_pid_collision": false
+    },
+    "373B:1178": {
+      "vid": "0x373B",
+      "pid": "0x1178",
+      "link_role": "wireless_dongle",
+      "protocol_family": "holtek_nano8k",
+      "candidate_model_ids": ["atk_a9_pro"],
+      "shared_pid_collision": true
+    },
     "3554:F503": {
       "vid": "0x3554",
       "pid": "0xF503",
@@ -4759,6 +4785,15 @@
     }
   ],
   "models": {
+    "atk_a9_pro": {
+      "brand": "ATK",
+      "display_name": "ATK A9 Pro",
+      "verification_tier": "catalog_only",
+      "calibration_status": "uncalibrated",
+      "lut_profile_id": null,
+      "protocol_family": "holtek_nano8k",
+      "voltage_capability": "none"
+    },
     "atk_f1_v2_ultimate": {
       "brand": "ATK",
       "display_name": "ATK F1 V2 Ultimate (8K)",

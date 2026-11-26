@@ -269,6 +269,7 @@ class TargetQuery:
                     query_id=query_id,
                     drain_before_write=True,
                     response_matcher=codec.make_response_matcher(wired=wired),
+                    **({"feature_request": True, "read_timeout_ms": 700} if codec.feature_request else {}),
                 )
                 received_at = datetime.now().astimezone()
                 if cancel.is_set() or tx_err == "cancelled":
