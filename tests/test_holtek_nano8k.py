@@ -8,7 +8,7 @@ from threading import Event
 from unittest.mock import Mock
 
 from atk_query import TargetQuery
-from protocols import BindingStore, HidTransport, get_codec
+from protocols import BindingStore, HidTransport, get_codec, make_device_uid
 
 
 def collection(pid, **overrides):
@@ -72,6 +72,21 @@ class HoltekNano8kTests(unittest.TestCase):
                          ("373B:112D", "success", 41))
         self.device.open_path.assert_called_once_with(wired["path"])
         self.device.send_feature_report.assert_called_once()
+
+    def test_wired_takes_priority_over_bound_wireless_of_same_model(self):
+        wired, wireless = collection(0x112D), collection(0x1178)
+        uid, basis = make_device_uid(0x373B, 0x1178, None, wireless["path"])
+        self.bindings.set_binding(device_uid=uid, vid_pid="373B:1178",
+                                  selected_model_id="atk_a9_pro", identity_basis=basis)
+        self.device.read.side_effect = [[], reply(), [], reply()]
+        result = self.query([wireless, wired])
+        self.assertEqual((result["vid_pid"], result["outcome"]), ("373B:112D", "success"))
+        self.device.open_path.assert_called_once_with(wired["path"])
+
+        self.device.open_path.reset_mock()
+        result = self.query([wireless, dict(wired, feature_report_length=8)])
+        self.assertEqual((result["vid_pid"], result["outcome"]), ("373B:1178", "success"))
+        self.device.open_path.assert_called_once_with(wireless["path"])
 
     def test_wrong_interface_never_opens_device(self):
         for overrides in ({"usage_page": 0xFF11}, {"interface_number": 1},

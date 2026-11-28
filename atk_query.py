@@ -127,6 +127,18 @@ class TargetQuery:
                     first_confirmation = hit
                 continue
             if is_bound:
+                if receiver.protocol_family == "holtek_nano8k" and receiver.link_role == "wireless_dongle":
+                    # The receiver can report sleep while its mouse is connected by USB.
+                    for wired_hit in hits:
+                        wired, _, wired_matches = wired_hit
+                        if (
+                            wired.protocol_family == receiver.protocol_family
+                            and wired.link_role == "wired_usb"
+                            and not wired.shared_pid_collision
+                            and wired.candidate_model_ids == (binding.selected_model_id,)
+                            and len(wired_matches) == 1
+                        ):
+                            return wired_hit
                 return hit
             if first_ready is None:
                 first_ready = hit
