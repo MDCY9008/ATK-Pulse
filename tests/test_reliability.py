@@ -1506,6 +1506,7 @@ class V08UiAndReleaseTests(unittest.TestCase):
                     w.select_page(idx)
                     APP.processEvents()
                     self.assertFalse(w.grab().isNull())
+                self.assertEqual(w.windowTitle(), f'{APP_NAME} · {VERSION_LABEL}')
                 title = next(label for label in w.findChildren(QLabel) if label.text() == '开源与声明')
                 self.assertCountEqual(
                     [label.text() for label in title.parentWidget().findChildren(QLabel)],
