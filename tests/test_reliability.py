@@ -39,8 +39,16 @@ APP = QApplication.instance() or QApplication([])
 TEST_ROOT = Path(os.environ.get('ATK_TEST_TMP', str(Path(__file__).resolve().parents[1] / '.test-temp')))
 TEST_ROOT.mkdir(parents=True, exist_ok=True)
 TEST_SETTINGS = tempfile.TemporaryDirectory(dir=TEST_ROOT)
-QSettings.setDefaultFormat(QSettings.Format.IniFormat)
-QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, TEST_SETTINGS.name)
+
+
+def isolated_settings(organization, application):
+    # The two-string QSettings constructor selects the Windows registry.
+    path = Path(TEST_SETTINGS.name) / organization / f"{application}.ini"
+    return QSettings(str(path), QSettings.Format.IniFormat)
+
+
+def setUpModule():
+    unittest.enterModuleContext(patch('dashboard.QSettings', isolated_settings))
 
 def packet(percent=95, voltage=4272, link=0):
     p = [8, 4, 0, 0, 0, 2, percent, link, voltage >> 8, voltage & 255, 0, 0, 0, 0, 0, 0, 0]
@@ -1405,6 +1413,8 @@ class V08UiAndReleaseTests(unittest.TestCase):
 
     def test_v08_5_visual_states_custom_png_and_3_pages_smoke(self):
         from PySide6.QtGui import QImage
+        from PySide6.QtWidgets import QLabel
+        from build_info import APP_NAME, AUTHOR_HANDLE, AUTHOR_NAME, REPO_URL, VERSION_LABEL
         from dashboard import Dashboard
         now = datetime.now().astimezone()
         sample_rows = [
@@ -1496,6 +1506,17 @@ class V08UiAndReleaseTests(unittest.TestCase):
                     w.select_page(idx)
                     APP.processEvents()
                     self.assertFalse(w.grab().isNull())
+                title = next(label for label in w.findChildren(QLabel) if label.text() == '开源与声明')
+                self.assertCountEqual(
+                    [label.text() for label in title.parentWidget().findChildren(QLabel)],
+                    [
+                        '开源与声明',
+                        '永久免费开源 · 谨防倒卖',
+                        f'• {APP_NAME} {VERSION_LABEL} by {AUTHOR_NAME} ({AUTHOR_HANDLE})，以 GNU GPL-3.0-or-later 协议永久免费开源。\n'
+                        f'• 项目主页：{REPO_URL} · 100% 本地离线运行，无联网与遥测。',
+                        '充电状态保持 unknown。',
+                    ],
+                )
 
     def test_window_buttons_and_close_hides_to_tray_keeping_badge_alive(self):
         from PySide6.QtCore import Qt
@@ -2679,7 +2700,7 @@ class TaskbarBadgeCustomPositionTests(unittest.TestCase):
     def test_custom_position_persistence_reload_and_reset(self):
         from dashboard import Dashboard
 
-        s = QSettings('PersonalTools', 'ATKBatteryMonitorV02')
+        s = isolated_settings('PersonalTools', 'ATKBatteryMonitorV02')
         s.remove('badge_position_mode')
         s.remove('badge_custom_x')
         s.sync()

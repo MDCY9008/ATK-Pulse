@@ -1335,13 +1335,12 @@ class Dashboard(QMainWindow):
         co_l.addLayout(oss_hdr)
         co_l.addWidget(text(
             f"• {APP_NAME} {VERSION_LABEL} by {AUTHOR_NAME} ({AUTHOR_HANDLE})，以 GNU GPL-3.0-or-later 协议永久免费开源。\n"
-            f"• 项目主页：{REPO_URL} · 100% 本地离线运行，无联网与遥测。\n"
-            "• 协议兼容研究致谢：NabuCasa / atk-f1-battery / VGN Hub 社区逆向资料与自主实机采样。",
+            f"• 项目主页：{REPO_URL} · 100% 本地离线运行，无联网与遥测。",
             role="body",
             wrap=True,
         ))
         co_l.addWidget(text(
-            "充电状态严守 unknown（不以 link_byte 臆断充电）；电压估算采用 15 点 LUT + 压降门控。",
+            "充电状态保持 unknown。",
             role="muted",
             wrap=True,
         ))

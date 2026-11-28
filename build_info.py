@@ -8,7 +8,7 @@ from pathlib import Path
 
 APP_NAME = "ATK-Pulse"
 DISPLAY_NAME = "ATK Battery Monitor"
-APP_VERSION = "0.8.4"
+APP_VERSION = "0.8.5"
 VERSION_LABEL = f"V{APP_VERSION}"
 SOURCE_VERSION_TAG = f"V{'.'.join(APP_VERSION.split('.')[:2])}"
 AUTHOR_NAME = "Liebe Kiana"
