@@ -34,6 +34,7 @@ def _parse_hid_rule(raw: dict | None, fallback: HidMatchRule) -> HidMatchRule:
         interface_number=raw.get("interface_number", fallback.interface_number),
         output_report_length=raw.get("output_report_length", fallback.output_report_length),
         input_report_length=raw.get("input_report_length", fallback.input_report_length),
+        feature_report_length=raw.get("feature_report_length", fallback.feature_report_length),
     )
 
 
@@ -94,6 +95,7 @@ class DeviceRegistry:
                 interface_number=hm.get("interface_number"),
                 output_report_length=hm.get("output_report_length"),
                 input_report_length=hm.get("input_report_length"),
+                feature_report_length=hm.get("feature_report_length"),
             )
 
         models: dict[str, ModelEntry] = {}

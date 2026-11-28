@@ -106,18 +106,31 @@ class TargetQuery:
         hits = self.transport.enumerate_whitelisted(self.registry.receiver_list(), devices=devices)
         if not hits:
             return None
-        # Prefer hits that also have a bound device_uid in BindingStore, then ready protocol, then wireless-first order.
         bindings = self.binding_store.load_all()
-        for receiver, vid_pid_devs, matched in hits:
-            if len(matched) == 1:
-                t = matched[0]
-                uid, _ = make_device_uid(receiver.vid, receiver.pid, t.get("serial_number"), t["path"])
-                if uid in bindings:
-                    return receiver, vid_pid_devs, matched
-        for receiver, vid_pid_devs, matched in hits:
-            if get_codec(receiver.protocol_family).protocol_status == "ready" and len(matched) == 1:
-                return receiver, vid_pid_devs, matched
-        return hits[0]
+        first_ready = first_confirmation = None
+        for hit in hits:
+            receiver, _, matched = hit
+            codec = get_codec(receiver.protocol_family)
+            if len(matched) != 1 or codec.protocol_status != "ready":
+                continue
+            target = matched[0]
+            uid, _ = make_device_uid(receiver.vid, receiver.pid, target.get("serial_number"), target["path"])
+            binding = bindings.get(uid)
+            is_bound = (
+                binding is not None
+                and binding.selected_model_id in receiver.candidate_model_ids
+                and self.registry.get_model(binding.selected_model_id) is not None
+            )
+            # A receiver waiting for confirmation must not block a queryable interface.
+            if codec.feature_request and receiver.shared_pid_collision and not is_bound:
+                if first_confirmation is None:
+                    first_confirmation = hit
+                continue
+            if is_bound:
+                return hit
+            if first_ready is None:
+                first_ready = hit
+        return first_ready or first_confirmation or hits[0]
 
     def __call__(self, query_id, mode, cancel):
         started = time.monotonic()
@@ -252,6 +265,9 @@ class TargetQuery:
             )
 
             codec = get_codec(receiver.protocol_family)
+            if codec.feature_request and receiver.shared_pid_collision and resolved.binding_state != "bound":
+                event["outcome"] = "model_confirmation_required"
+                return event
             wired = receiver.link_role == "wired_usb"
             request = codec.build_request(wired=wired)
             if request is None or resolved.binding_state == "pending_protocol":
@@ -269,6 +285,7 @@ class TargetQuery:
                     query_id=query_id,
                     drain_before_write=True,
                     response_matcher=codec.make_response_matcher(wired=wired),
+                    **({"feature_request": True, "read_timeout_ms": 700} if codec.feature_request else {}),
                 )
                 received_at = datetime.now().astimezone()
                 if cancel.is_set() or tx_err == "cancelled":

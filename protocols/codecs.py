@@ -20,6 +20,7 @@ class ProtocolCodec(ABC):
     family: str = ""
     protocol_status: str = "ready"
     response_length: int = 0
+    feature_request: bool = False
 
     @abstractmethod
     def build_request(self, *, wired: bool = False) -> list[int] | None:
@@ -382,7 +383,39 @@ class NanoFf05Codec(ProtocolCodec):
         )
 
 
+class HoltekNano8kCodec(ProtocolCodec):
+    """Read firmware-reported battery percentage from the Holtek 8K Nano receiver."""
+
+    family = "holtek_nano8k"
+    response_length = 65
+    feature_request = True
+
+    def build_request(self, *, wired: bool = False) -> list[int]:
+        # Feature report ID 0 followed by the read-only GetConfigData command.
+        return [0, 0x82] + [0] * 7
+
+    def make_response_matcher(self, *, wired: bool = False) -> Callable[[Sequence[int]], bool]:
+        # The reply is an input report; ignore unsolicited DPI/rate notifications.
+        # hidapi strips the leading zero report ID on Windows.
+        return lambda data: len(data) == 64 and data[0] == 0x82
+
+    def parse_response(self, data: Sequence[int] | None, *, wired: bool = False) -> PacketReading:
+        if not data or not self.make_response_matcher()(data):
+            return PacketReading(present=False, failure_reason="invalid_report")
+        link = data[9]
+        if not link:
+            return PacketReading(present=False, packet_valid=True, asleep=True,
+                                 link_byte=link, failure_reason="device_asleep")
+        percent = data[8] & 0x7F  # Bit 7 is the charging flag.
+        if not 1 <= percent <= 100:
+            return PacketReading(present=False, packet_valid=True, link_byte=link,
+                                 failure_reason="invalid_percent")
+        return PacketReading(present=True, percent=percent, packet_valid=True,
+                             percent_valid=True, link_byte=link)
+
+
 _CODECS: dict[str, type[ProtocolCodec]] = {
+    "holtek_nano8k": HoltekNano8kCodec,
     "nordic52": Nordic52Codec,
     "nordic54": Nordic54Codec,
     "evision_nearlink": NearlinkCodec,
