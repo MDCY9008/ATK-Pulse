@@ -252,6 +252,9 @@ class TargetQuery:
             )
 
             codec = get_codec(receiver.protocol_family)
+            if codec.feature_request and receiver.shared_pid_collision and resolved.binding_state != "bound":
+                event["outcome"] = "model_confirmation_required"
+                return event
             wired = receiver.link_role == "wired_usb"
             request = codec.build_request(wired=wired)
             if request is None or resolved.binding_state == "pending_protocol":

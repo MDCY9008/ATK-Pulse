@@ -17,7 +17,7 @@ from .types import HidMatchRule, ReceiverEntry
 
 log = logging.getLogger(__name__)
 
-_CAPS_CACHE: dict[str, tuple[int | None, int | None]] = {}
+_CAPS_CACHE: dict[str, tuple[int | None, int | None, int | None]] = {}
 _CAPS_CACHE_MAX = 512
 _HIDP_STATUS_SUCCESS = 0x00110000
 
@@ -57,20 +57,21 @@ def _is_real_windows_hid_path(path: bytes | str | None) -> bool:
 
 
 def query_hid_caps(path: bytes | str | None) -> tuple[int | None, int | None]:
-    """Read (OutputReportByteLength, InputReportByteLength) without device I/O.
+    """Read output and input report lengths without device I/O."""
+    output, input_, _ = _query_hid_report_lengths(path)
+    return output, input_
 
-    Opens the Windows HID device path with dwDesiredAccess=0 (metadata-only) and
-    queries HidP_GetCaps. Returns (None, None) on non-Windows or any failure.
-    """
+def _query_hid_report_lengths(path: bytes | str | None) -> tuple[int | None, int | None, int | None]:
+    """Read output, input and feature lengths using a metadata-only handle."""
     if sys.platform != "win32" or not path:
-        return None, None
+        return None, None, None
     p = _decode_path(path)
     if not p:
-        return None, None
+        return None, None, None
     cached = _CAPS_CACHE.get(p)
     if cached is not None:
         return cached
-    result: tuple[int | None, int | None] = (None, None)
+    result: tuple[int | None, int | None, int | None] = (None, None, None)
     try:
         k32 = ctypes.WinDLL("kernel32", use_last_error=True)
         hidd = ctypes.WinDLL("hid", use_last_error=True)
@@ -100,13 +101,14 @@ def query_hid_caps(path: bytes | str | None) -> tuple[int | None, int | None]:
                             result = (
                                 int(caps.OutputReportByteLength),
                                 int(caps.InputReportByteLength),
+                                int(caps.FeatureReportByteLength),
                             )
                     finally:
                         hidd.HidD_FreePreparsedData(pp)
             finally:
                 k32.CloseHandle(handle)
     except Exception:
-        result = (None, None)
+        result = (None, None, None)
 
     if len(_CAPS_CACHE) >= _CAPS_CACHE_MAX:
         _CAPS_CACHE.clear()
@@ -127,6 +129,13 @@ def matches_hid_rule(
         return False
     if rule.interface_number is not None and desc.get("interface_number") != rule.interface_number:
         return False
+
+    if rule.feature_report_length is not None:
+        feature_len = desc.get("feature_report_length")
+        if feature_len is None:
+            _, _, feature_len = _query_hid_report_lengths(desc.get("path"))
+        if feature_len != rule.feature_report_length:
+            return False
 
     if rule.output_report_length is not None or rule.input_report_length is not None:
         out_len = desc.get("output_report_length")

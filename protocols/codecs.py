@@ -396,7 +396,8 @@ class HoltekNano8kCodec(ProtocolCodec):
 
     def make_response_matcher(self, *, wired: bool = False) -> Callable[[Sequence[int]], bool]:
         # The reply is an input report; ignore unsolicited DPI/rate notifications.
-        return lambda data: len(data) >= 10 and data[0] == 0x82
+        # hidapi strips the leading zero report ID on Windows.
+        return lambda data: len(data) == 64 and data[0] == 0x82
 
     def parse_response(self, data: Sequence[int] | None, *, wired: bool = False) -> PacketReading:
         if not data or not self.make_response_matcher()(data):
@@ -404,7 +405,7 @@ class HoltekNano8kCodec(ProtocolCodec):
         link = data[9]
         if not link:
             return PacketReading(present=False, packet_valid=True, asleep=True,
-                                 link_byte=link, failure_reason="mouse_asleep")
+                                 link_byte=link, failure_reason="device_asleep")
         percent = data[8] & 0x7F  # Bit 7 is the charging flag.
         if not 1 <= percent <= 100:
             return PacketReading(present=False, packet_valid=True, link_byte=link,

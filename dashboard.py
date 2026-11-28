@@ -1667,6 +1667,7 @@ class Dashboard(QMainWindow):
             "device_changed": "查询期间设备路径变化，已丢弃旧结果",
             "device_busy": "其他协作进程正在查询",
             "device_asleep": "接收器在线，鼠标当前处于休眠或未应答",
+            "model_confirmation_required": "请先确认鼠标型号",
             "protocol_pending_capture": "已识别未核实协议槽位，待实机抓包后启用",
             "open_error": "接口打开失败",
             "write_error": "发送失败",

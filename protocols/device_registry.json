@@ -12,7 +12,7 @@
         "usage_page": "0xFF10",
         "usage": "0x0001",
         "interface_number": 2,
-        "output_report_length": 65,
+        "feature_report_length": 9,
         "input_report_length": 65
       }
     },
@@ -4788,7 +4788,7 @@
     "atk_a9_pro": {
       "brand": "ATK",
       "display_name": "ATK A9 Pro",
-      "verification_tier": "catalog_only",
+      "verification_tier": "protocol_known_uncalibrated",
       "calibration_status": "uncalibrated",
       "lut_profile_id": null,
       "protocol_family": "holtek_nano8k",

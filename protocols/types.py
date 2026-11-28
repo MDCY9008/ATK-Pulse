@@ -19,6 +19,7 @@ class HidMatchRule:
     interface_number: int | None = None
     output_report_length: int | None = None
     input_report_length: int | None = None
+    feature_report_length: int | None = None
 
 
 @dataclass(frozen=True)
